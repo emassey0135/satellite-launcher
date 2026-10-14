@@ -94,16 +94,25 @@ final class SetupSteps {
             {"boot_patch.sh", "assets/boot_patch.sh"},
             {"addon.d.sh", "assets/addon.d.sh"},
     };
+    /**
+     * Google Play: its services, the framework under them and the Play Store. Orbit turns some of them off on the Orbit
+     * Player before shipping it, which leaves no way to install apps and stops many from working.
+     */
+    private static final String[] GOOGLE_PLAY = {
+            "com.google.android.gsf", "com.google.android.gms", "com.android.vending"};
     private static final String[] BOOT_GUARD_FILES = {"module.prop", "post-fs-data.sh", "service.sh"};
 
     private final Context context;
     private final PackageManager pm;
     private final SetupEngine.Listener listener;
+    private final boolean turnOnGooglePlay;
 
-    SetupSteps(Context context, SetupEngine.Listener listener) {
+    /** @param turnOnGooglePlay whether to turn Google Play on where it was turned off; see {@link #GOOGLE_PLAY}. */
+    SetupSteps(Context context, SetupEngine.Listener listener, boolean turnOnGooglePlay) {
         this.context = context;
         this.pm = context.getPackageManager();
         this.listener = listener;
+        this.turnOnGooglePlay = turnOnGooglePlay;
     }
 
     List<Step> steps() {
@@ -125,6 +134,7 @@ final class SetupSteps {
                 // The launcher needs the hook (Orbit leaves its window alone and gives it the keypad), not Backtalk.
                 step("make this launcher the home app", this::makeHome),
                 step("apply the device settings", this::applyDeviceSettings),
+                step("turn on Google Play", this::enableGooglePlay),
                 step("install Backtalk", this::installBacktalk),
                 step("let the Orbit hook be Backtalk's braille display", this::allowDisplay),
                 step("turn Backtalk on", this::enableBacktalk),
@@ -205,6 +215,13 @@ final class SetupSteps {
                     pm.getApplicationEnabledSetting(DeviceSetup.AUTOMATION_PACKAGE));
         } catch (IllegalArgumentException e) {
             // Not installed.
+        }
+        for (String pkg : GOOGLE_PLAY) {
+            try {
+                backup.enabledStates.put(pkg, pm.getApplicationEnabledSetting(pkg));
+            } catch (IllegalArgumentException e) {
+                // Not installed.
+            }
         }
         backup.zygisk = sqliteValue(root("magisk --sqlite \"SELECT value FROM settings WHERE key='zygisk'\"").output,
                 "value");
@@ -534,6 +551,32 @@ final class SetupSteps {
     /** Finish at home, wherever setup left the user (such as Backtalk's script settings after it asked). */
     private Outcome goHome() {
         root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+        return Outcome.DONE;
+    }
+
+    /**
+     * Turns Google Play back on where it was turned off, once, during setup; later the user's choice stands, so the
+     * launcher doesn't keep it on the way it keeps the device settings. The computer can leave it as it is.
+     */
+    private Outcome enableGooglePlay() throws StopException {
+        if (!turnOnGooglePlay) return Outcome.DONE;
+        StringBuilder enable = new StringBuilder();
+        for (String pkg : GOOGLE_PLAY) {
+            int state;
+            try {
+                state = pm.getApplicationEnabledSetting(pkg);
+            } catch (IllegalArgumentException e) {
+                continue; // not on this device
+            }
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                    || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                if (enable.length() > 0) enable.append(" && ");
+                enable.append("pm enable ").append(pkg);
+            }
+        }
+        if (enable.length() == 0) return Outcome.DONE;
+        rootOrStop(enable.toString(), "Setup couldn't turn on Google Play.");
+        listener.say("Turned on Google Play.");
         return Outcome.DONE;
     }
 
