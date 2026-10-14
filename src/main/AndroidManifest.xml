@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.emassey0135.communitylauncher">
-    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
-
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- A launcher lists every app. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:name="dev.emassey0135.communitylauncher.CommunityLauncherApp"
+        android:name=".CommunityLauncherApp"
         android:label="Community Launcher"
         android:allowBackup="false">
         <!-- The launcher speaks for itself via Orbit's screen reader, so Backtalk steps aside and Orbit's hook
@@ -15,7 +14,7 @@
         <meta-data android:name="orbit.self_voicing" android:value="true" />
 
         <activity
-            android:name="dev.emassey0135.communitylauncher.PowerDialogActivity"
+            android:name=".PowerDialogActivity"
             android:exported="false"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
@@ -24,7 +23,7 @@
             android:theme="@android:style/Theme.DeviceDefault.Dialog" />
 
         <activity
-            android:name="dev.emassey0135.communitylauncher.LauncherActivity"
+            android:name=".LauncherActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
@@ -39,12 +38,12 @@
         </activity>
 
         <provider
-            android:name="dev.emassey0135.communitylauncher.GuideProvider"
+            android:name=".GuideProvider"
             android:authorities="dev.emassey0135.communitylauncher.guide"
             android:exported="false"
             android:grantUriPermissions="true" />
 
-        <receiver android:name="dev.emassey0135.communitylauncher.BootReceiver" android:exported="true">
+        <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>

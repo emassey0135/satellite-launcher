@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application' version '9.4.1'
+}
+
+// Release builds are signed with the key described in keystore.properties (not committed), when it exists:
+// storeFile, storePassword, keyAlias, keyPassword.
+def keystoreFile = rootProject.file('keystore.properties')
+def keystore = new Properties()
+if (keystoreFile.exists()) {
+    keystoreFile.withInputStream { keystore.load(it) }
+}
+
+android {
+    namespace = 'dev.emassey0135.communitylauncher'
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = 'dev.emassey0135.communitylauncher'
+        minSdk = 30
+        // The Orbit Speak and Orbit Player run Android 11.
+        targetSdk = 30
+        versionCode = 1
+        versionName = '0.1.0'
+    }
+
+    buildFeatures {
+        aidl = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            release {
+                storeFile = rootProject.file(keystore['storeFile'])
+                storePassword = keystore['storePassword']
+                keyAlias = keystore['keyAlias']
+                keyPassword = keystore['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.release
+            }
+        }
+    }
+
+    lint {
+        // targetSdk stays at Android 11, the version the Orbit devices run; this isn't a Play Store app.
+        disable 'ExpiredTargetSdkVersion', 'OldTargetApi'
+    }
+}
