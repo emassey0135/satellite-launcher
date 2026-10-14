@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.emassey0135.communitylauncher">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
+
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:name="dev.emassey0135.communitylauncher.CommunityLauncherApp"
+        android:label="Community Launcher"
+        android:allowBackup="false">
+        <!-- The launcher speaks for itself via Orbit's screen reader, so Backtalk steps aside and Orbit's hook
+             routes the keypad to it (this launcher is no longer com.orbit.-prefixed, so it relies on that hook). -->
+        <meta-data android:name="orbit.self_voicing" android:value="true" />
+
+        <activity
+            android:name="dev.emassey0135.communitylauncher.PowerDialogActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:stateNotNeeded="true"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog" />
+
+        <activity
+            android:name="dev.emassey0135.communitylauncher.LauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="dev.emassey0135.communitylauncher.GuideProvider"
+            android:authorities="dev.emassey0135.communitylauncher.guide"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <receiver android:name="dev.emassey0135.communitylauncher.BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
