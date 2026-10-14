@@ -105,14 +105,16 @@ final class SetupSteps {
     private final Context context;
     private final PackageManager pm;
     private final SetupEngine.Listener listener;
-    private final boolean turnOnGooglePlay;
+    /** The computer's choices (see {@link SetupService}), and what the first run left to do. */
+    private final android.content.SharedPreferences options;
+    /** Set when setup makes its backup, which only its first run does, until Do Not Disturb has been seen to. */
+    private static final String DND_PENDING = "dnd_pending";
 
-    /** @param turnOnGooglePlay whether to turn Google Play on where it was turned off; see {@link #GOOGLE_PLAY}. */
-    SetupSteps(Context context, SetupEngine.Listener listener, boolean turnOnGooglePlay) {
+    SetupSteps(Context context, SetupEngine.Listener listener) {
         this.context = context;
         this.pm = context.getPackageManager();
         this.listener = listener;
-        this.turnOnGooglePlay = turnOnGooglePlay;
+        this.options = context.getSharedPreferences(SetupService.OPTIONS, Context.MODE_PRIVATE);
     }
 
     List<Step> steps() {
@@ -135,6 +137,7 @@ final class SetupSteps {
                 step("make this launcher the home app", this::makeHome),
                 step("apply the device settings", this::applyDeviceSettings),
                 step("turn on Google Play", this::enableGooglePlay),
+                step("turn off Do Not Disturb", this::disableDoNotDisturb),
                 step("install Backtalk", this::installBacktalk),
                 step("let the Orbit hook be Backtalk's braille display", this::allowDisplay),
                 step("turn Backtalk on", this::enableBacktalk),
@@ -236,6 +239,7 @@ final class SetupSteps {
             }
         }
         backup.launcherUid = context.getApplicationInfo().uid;
+        backup.zenMode = Settings.Global.getInt(context.getContentResolver(), "zen_mode", -1);
         rootOrStop("mkdir -p " + STATE_DIR + " && chmod 700 " + STATE_DIR, "Setup couldn't save its backup.");
         if (root("[ -f " + LSPOSED_DB + " ]").ok()) {
             rootOrStop("cp " + LSPOSED_DB + " " + STATE_DIR + "/modules_config.db", "Setup couldn't save its backup.");
@@ -250,6 +254,7 @@ final class SetupSteps {
         File script = writeCache("restore.sh", backup.restoreScript(created).getBytes(StandardCharsets.UTF_8));
         rootOrStop("cat " + script + " > " + STATE_DIR + "/restore.sh.new && mv " + STATE_DIR + "/restore.sh.new "
                 + STATE_DIR + "/restore.sh && chmod 700 " + STATE_DIR + "/restore.sh", "Setup couldn't save its backup.");
+        options.edit().putBoolean(DND_PENDING, true).apply();
         listener.say("Saved a backup of the device's settings.");
         return Outcome.DONE;
     }
@@ -543,6 +548,8 @@ final class SetupSteps {
         if (ours.equals(currentHome())) return Outcome.DONE;
         rootOrStop("cmd package set-home-activity " + ours.flattenToShortString(),
                 "Setup couldn't make this launcher the home app.");
+        // Orbit's launcher turns Do Not Disturb back on whenever it opens; stop it so it doesn't open again.
+        root("am force-stop com.orbit.homelauncher");
         root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
         listener.say("Made this launcher the home app.");
         return Outcome.DONE;
@@ -559,7 +566,7 @@ final class SetupSteps {
      * launcher doesn't keep it on the way it keeps the device settings. The computer can leave it as it is.
      */
     private Outcome enableGooglePlay() throws StopException {
-        if (!turnOnGooglePlay) return Outcome.DONE;
+        if (!options.getBoolean(SetupService.EXTRA_GOOGLE_PLAY, true)) return Outcome.DONE;
         StringBuilder enable = new StringBuilder();
         for (String pkg : GOOGLE_PLAY) {
             int state;
@@ -577,6 +584,21 @@ final class SetupSteps {
         if (enable.length() == 0) return Outcome.DONE;
         rootOrStop(enable.toString(), "Setup couldn't turn on Google Play.");
         listener.say("Turned on Google Play.");
+        return Outcome.DONE;
+    }
+
+    /**
+     * Orbit turns Do Not Disturb on (to priority only), so the first run of setup turns it off; after that it is the
+     * user's to choose, so later runs, such as after an update, leave it alone. The computer can leave it as it is.
+     */
+    private Outcome disableDoNotDisturb() throws StopException {
+        if (!options.getBoolean(DND_PENDING, false)) return Outcome.DONE;
+        if (options.getBoolean(SetupService.EXTRA_TURN_OFF_DND, true)
+                && Settings.Global.getInt(context.getContentResolver(), "zen_mode", 0) != 0) {
+            rootOrStop("cmd notification set_dnd off", "Setup couldn't turn off Do Not Disturb.");
+            listener.say("Turned off Do Not Disturb.");
+        }
+        options.edit().putBoolean(DND_PENDING, false).apply();
         return Outcome.DONE;
     }
 

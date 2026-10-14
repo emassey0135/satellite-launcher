@@ -28,15 +28,21 @@ import java.util.Locale;
  * and {@link BootReceiver} starts it again after setup restarts the device. It writes what it does to
  * {@code files/setup.log}.
  *
- * <p>Setup turns Google Play on where it was turned off, unless started with {@code --ez google_play false}. The choice
- * is kept for later runs, including after setup's restarts, until a start says otherwise.
+ * <p>The computer's choices, each on unless a start says otherwise and kept for later runs (including after setup's
+ * restarts) until another start changes it: {@code --ez google_play false} leaves Google Play as it is rather than
+ * turning it on where it was turned off, and {@code --ez turn_off_dnd false} leaves Do Not Disturb as it is on the first
+ * run rather than turning it off.
  */
 public final class SetupService extends Service {
     private static final String TAG = LauncherModel.TAG;
     /** Set when the device has come back up from setup's own restart, rather than someone starting setup. */
     static final String EXTRA_RESUME = "resume";
+    /** Where the computer's choices are kept. */
+    static final String OPTIONS = "setup";
     /** Whether to turn Google Play on where it was turned off (default true). */
     static final String EXTRA_GOOGLE_PLAY = "google_play";
+    /** Whether the first run turns off Do Not Disturb (default true). */
+    static final String EXTRA_TURN_OFF_DND = "turn_off_dnd";
     private static final String CHANNEL = "setup";
 
     private ScreenReaderClient sr;
@@ -48,11 +54,12 @@ public final class SetupService extends Service {
         if (running) return START_NOT_STICKY;
         running = true;
         boolean started = intent == null || !intent.getBooleanExtra(EXTRA_RESUME, false);
-        android.content.SharedPreferences options = getSharedPreferences("setup", MODE_PRIVATE);
-        if (intent != null && intent.hasExtra(EXTRA_GOOGLE_PLAY)) {
-            options.edit().putBoolean(EXTRA_GOOGLE_PLAY, intent.getBooleanExtra(EXTRA_GOOGLE_PLAY, true)).apply();
+        android.content.SharedPreferences options = getSharedPreferences(OPTIONS, MODE_PRIVATE);
+        for (String option : new String[] {EXTRA_GOOGLE_PLAY, EXTRA_TURN_OFF_DND}) {
+            if (intent != null && intent.hasExtra(option)) {
+                options.edit().putBoolean(option, intent.getBooleanExtra(option, true)).commit();
+            }
         }
-        boolean googlePlay = options.getBoolean(EXTRA_GOOGLE_PLAY, true);
         sr = new ScreenReaderClient(this, new ScreenReaderClient.Listener() {
             @Override public void onReady() { if (sr.isScreenReaderReady()) speakUnspoken(); }
             @Override public void onKey(String keyName, int action, boolean longPress) { }
@@ -60,7 +67,7 @@ public final class SetupService extends Service {
         sr.bind();
         new Thread(() -> {
             SetupEngine.Listener listener = new Listener(this);
-            SetupEngine engine = new SetupEngine(new SetupSteps(this, listener, googlePlay).steps(), new FileStore(this),
+            SetupEngine engine = new SetupEngine(new SetupSteps(this, listener).steps(), new FileStore(this),
                     new SetupEngine.Device() {
                         @Override public String bootId() { return bootIdOf(); }
                         @Override public void restart() throws Exception {

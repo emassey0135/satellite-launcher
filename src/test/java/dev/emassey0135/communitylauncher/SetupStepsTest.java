@@ -81,6 +81,7 @@ public class SetupStepsTest {
         b.backtalkInstalled = true;
         b.rootNotifications.put(10170, 1);
         b.launcherUid = 10207;
+        b.zenMode = 1;
         String script = b.restoreScript("2026-10-14 06:00");
 
         assertTrue(script.contains("settings put secure enabled_accessibility_services "
@@ -96,6 +97,7 @@ public class SetupStepsTest {
         assertFalse(script.contains("pm uninstall fyi.quin.backtalk")); // it was there before
         assertTrue(script.contains("UPDATE policies SET notification=1 WHERE uid=10170"));
         assertTrue(script.contains("DELETE FROM policies WHERE uid=10207"));
+        assertTrue(script.contains("cmd notification set_dnd priority\n"));
     }
 
     @Test public void restoreScriptKeepsAnLsposedThatWasThere() {

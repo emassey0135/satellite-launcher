@@ -27,6 +27,8 @@ final class SetupBackup {
     /** Magisk policies' notification setting by app uid. */
     final Map<Integer, Integer> rootNotifications = new LinkedHashMap<>();
     int launcherUid;
+    /** Settings.Global zen_mode (Do Not Disturb), or -1 if unknown. */
+    int zenMode = -1;
 
     String restoreScript(String created) {
         StringBuilder s = new StringBuilder();
@@ -60,6 +62,8 @@ final class SetupBackup {
                     .append(" WHERE uid=").append(e.getKey()).append("\"\n");
         }
         s.append("magisk --sqlite \"DELETE FROM policies WHERE uid=").append(launcherUid).append("\"\n");
+        String dnd = zenMode == 0 ? "off" : zenMode == 1 ? "priority" : zenMode == 2 ? "none" : zenMode == 3 ? "alarms" : null;
+        if (dnd != null) s.append("cmd notification set_dnd ").append(dnd).append('\n');
         s.append("echo 'Restored. Uninstall the launcher, then restart the device.'\n");
         return s.toString();
     }
