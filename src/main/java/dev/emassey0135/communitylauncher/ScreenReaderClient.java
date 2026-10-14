@@ -55,8 +55,16 @@ final class ScreenReaderClient {
 
     boolean isReady() { return sr != null; }
 
+    private volatile boolean screenReaderReady;
+
+    /**
+     * Whether Orbit's screen reader has said it is ready. Until then (for a while after the device starts) it is bound
+     * but drops what it is asked to speak.
+     */
+    boolean isScreenReaderReady() { return sr != null && screenReaderReady; }
+
     private final IOlympusSDKCallback sdk = new IOlympusSDKCallback.Stub() {
-        @Override public void onScreenReaderReady() { register(); listener.onReady(); }
+        @Override public void onScreenReaderReady() { screenReaderReady = true; register(); listener.onReady(); }
         @Override public void onUtteranceStart(String id) { }
         @Override public void onUtteranceDone(String id) { }
         @Override public void onUtteranceError(String id) { }
@@ -88,10 +96,11 @@ final class ScreenReaderClient {
             register();
             listener.onReady();
         }
-        @Override public void onServiceDisconnected(ComponentName n) { sr = null; }
+        @Override public void onServiceDisconnected(ComponentName n) { sr = null; screenReaderReady = false; }
         /** The screen reader was updated or force-stopped; Android won't reconnect this binding, so bind again. */
         @Override public void onBindingDied(ComponentName n) {
             sr = null;
+            screenReaderReady = false;
             try { context.unbindService(this); } catch (Exception ignored) { }
             bind();
         }

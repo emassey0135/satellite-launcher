@@ -17,7 +17,9 @@ import java.util.Set;
  * Puts back the parts of the device setup that an Orbit update (or anything else) can undo, so that nobody has to
  * connect the device to a computer again afterwards. Do Not Disturb is the user's choice and is left alone.
  *
- * <p>Everything is checked without root first; only what needs changing is done, in a single {@code su} call.
+ * <p>Everything is checked without root first; only what needs changing is done, in a single {@code su} call. Nothing is
+ * done until setup has made this launcher the home app, so a device that isn't set up yet (or whose setup is still
+ * making its backup) is left alone.
  */
 final class DeviceSetup {
     private static final String TAG = LauncherModel.TAG;
@@ -56,6 +58,7 @@ final class DeviceSetup {
 
     static synchronized void apply(Context context, boolean rootGrants) {
         PackageManager pm = context.getPackageManager();
+        if (!new ComponentName(context, LauncherActivity.class).equals(SetupSteps.currentHome(pm))) return;
         ContentResolver resolver = context.getContentResolver();
         List<String> commands = new ArrayList<>();
 

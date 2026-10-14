@@ -39,6 +39,9 @@ import java.util.zip.ZipFile;
  * launcher as the home app. The settings that Orbit updates can undo are left to {@link DeviceSetup}, which this runs
  * last and the launcher runs again whenever Orbit's apps change.
  *
+ * <p>The launcher becomes the home app as soon as the hook works, before Backtalk, which it doesn't need; until then
+ * Orbit's launcher stays the home app.
+ *
  * <p>What it installs is downloaded from where each is published, and checked: LSPosed against its checksum, apps
  * against the key their makers sign them with. A computer can instead put files in {@link #PAYLOAD} (only adb and root
  * can write there), which are used as they are, such as to set up without a network or to test a build. Each is needed
@@ -77,6 +80,8 @@ final class SetupSteps {
     /** The apps the hook runs in. */
     private static final String[] HOOK_SCOPE = {"com.orbit.screenreader", "com.orbit.alarmclock"};
     private static final String MAGISK_APP = "com.topjohnwu.magisk";
+    /** Orbit's launcher, the home app the devices come with. */
+    private static final String ORBIT_HOME = "com.orbit.homelauncher/.HomeLauncherActivity";
     /** Magisk's own files: the name in /data/adb/magisk, and where the Magisk app keeps it. */
     private static final String[][] MAGISK_FILES = {
             {"busybox", "lib/arm64-v8a/libbusybox.so"},
@@ -104,6 +109,7 @@ final class SetupSteps {
     List<Step> steps() {
         return Arrays.asList(
                 step("check the device", this::checkDevice),
+                step("keep a home app until setup finishes", this::keepHome),
                 step("back up what setup changes", this::backUp),
                 step("repair Magisk", this::repairMagisk),
                 SetupEngine.RESTART,
@@ -112,17 +118,18 @@ final class SetupSteps {
                 step("install LSPosed", this::installLsposed),
                 SetupEngine.RESTART,
                 step("check that LSPosed is running", this::checkLsposed),
-                step("install Backtalk", this::installBacktalk),
                 step("install the Orbit hook", this::installHook),
-                step("let the Orbit hook be Backtalk's braille display", this::allowDisplay),
                 step("turn the Orbit hook on in LSPosed", this::enableHook),
                 SetupEngine.RESTART,
                 step("check that the Orbit hook is working", this::checkHook),
+                // The launcher needs the hook (Orbit leaves its window alone and gives it the keypad), not Backtalk.
+                step("make this launcher the home app", this::makeHome),
+                step("apply the device settings", this::applyDeviceSettings),
+                step("install Backtalk", this::installBacktalk),
+                step("let the Orbit hook be Backtalk's braille display", this::allowDisplay),
                 step("turn Backtalk on", this::enableBacktalk),
                 step("check that Backtalk uses the Orbit's keys", this::checkDisplay),
                 step("install the step aside script", this::installScript),
-                step("make this launcher the home app", this::makeHome),
-                step("apply the device settings", this::applyDeviceSettings),
                 step("go to the home screen", this::goHome));
     }
 
@@ -161,6 +168,17 @@ final class SetupSteps {
         return Outcome.DONE;
     }
 
+    /**
+     * Installing this launcher gives Android a second home app, so it forgets which is the default and asks the user to
+     * choose the next time they go home. Until the hook works and setup makes this launcher the home app, Orbit's stays
+     * the default.
+     */
+    private Outcome keepHome() throws StopException {
+        if (currentHome() != null || installed("com.orbit.homelauncher") == null) return Outcome.DONE;
+        rootOrStop("cmd package set-home-activity " + ORBIT_HOME, "Setup couldn't keep Orbit's launcher as the home app.");
+        return Outcome.DONE;
+    }
+
     /** Once, before anything is changed: how the device was, as a script that puts it back. */
     private Outcome backUp() throws Exception {
         if (root("[ -f " + STATE_DIR + "/restore.sh ]").ok()) return Outcome.DONE;
@@ -173,7 +191,8 @@ final class SetupSteps {
             backup.system.put(name, Settings.System.getString(context.getContentResolver(), name));
         }
         ComponentName home = currentHome();
-        backup.home = home == null ? null : home.flattenToShortString();
+        backup.home = home != null ? home.flattenToShortString()
+                : installed("com.orbit.homelauncher") != null ? ORBIT_HOME : null;
         for (String name : DeviceSetup.DISABLED_COMPONENTS) {
             try {
                 backup.enabledStates.put(name, pm.getComponentEnabledSetting(ComponentName.unflattenFromString(name)));
@@ -214,6 +233,7 @@ final class SetupSteps {
         File script = writeCache("restore.sh", backup.restoreScript(created).getBytes(StandardCharsets.UTF_8));
         rootOrStop("cat " + script + " > " + STATE_DIR + "/restore.sh.new && mv " + STATE_DIR + "/restore.sh.new "
                 + STATE_DIR + "/restore.sh && chmod 700 " + STATE_DIR + "/restore.sh", "Setup couldn't save its backup.");
+        listener.say("Saved a backup of the device's settings.");
         return Outcome.DONE;
     }
 
@@ -270,6 +290,7 @@ final class SetupSteps {
         copy.append(" && chmod 644 ").append(GUARD_MODULE).append("/module.prop && chmod 755 ").append(GUARD_MODULE)
                 .append("/*.sh && chcon -R u:object_r:system_file:s0 ").append(GUARD_MODULE);
         rootOrStop(copy.toString(), "Setup couldn't install the boot guard.");
+        listener.say("Installed the boot guard.");
         return Outcome.DONE; // it only needs to be there at the next start
     }
 
@@ -279,6 +300,7 @@ final class SetupSteps {
         if ("1".equals(value)) return Outcome.DONE;
         rootOrStop("magisk --sqlite \"REPLACE INTO settings (key,value) VALUES('zygisk',1)\"",
                 "Setup couldn't turn on Zygisk in Magisk.");
+        listener.say("Turned on Zygisk.");
         return Outcome.NEEDS_RESTART;
     }
 
@@ -384,6 +406,7 @@ final class SetupSteps {
         // The copy is now one file, with LSPosed's log of changes folded in; drop the real one's so it isn't replayed.
         rootOrStop("cat " + db + " > " + LSPOSED_DB + " && rm -f " + LSPOSED_DB + "-wal " + LSPOSED_DB + "-shm",
                 "Setup couldn't turn the Orbit hook on in LSPosed.");
+        listener.say("Turned the Orbit hook on in LSPosed.");
         return Outcome.NEEDS_RESTART;
     }
 
@@ -398,7 +421,10 @@ final class SetupSteps {
             while (SystemClock.uptimeMillis() < until) {
                 String log = root("cat \"$(ls -t /data/adb/lspd/log/modules_* | head -1)\"").output;
                 HookStatus status = hookStatus(log, uid);
-                if (status == HookStatus.WORKING) return Outcome.DONE;
+                if (status == HookStatus.WORKING) {
+                    if (attempt > 0) listener.say("The Orbit hook is working.");
+                    return Outcome.DONE;
+                }
                 if (status == HookStatus.FAILED) {
                     throw new StopException("The Orbit hook is loaded, but it can't find what it needs in this version of "
                             + "Orbit's screen reader, so Backtalk won't be turned on.");
@@ -500,6 +526,8 @@ final class SetupSteps {
         if (ours.equals(currentHome())) return Outcome.DONE;
         rootOrStop("cmd package set-home-activity " + ours.flattenToShortString(),
                 "Setup couldn't make this launcher the home app.");
+        root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+        listener.say("Made this launcher the home app.");
         return Outcome.DONE;
     }
 
@@ -556,6 +584,11 @@ final class SetupSteps {
     }
 
     private ComponentName currentHome() {
+        return currentHome(pm);
+    }
+
+    /** The default home activity, or null if there is none and Android would ask. */
+    static ComponentName currentHome(PackageManager pm) {
         Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
         ResolveInfo info = pm.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY);
         if (info == null || info.activityInfo == null || "android".equals(info.activityInfo.packageName)) return null;

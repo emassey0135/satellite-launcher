@@ -44,7 +44,7 @@ public final class SetupService extends Service {
         running = true;
         boolean started = intent == null || !intent.getBooleanExtra(EXTRA_RESUME, false);
         sr = new ScreenReaderClient(this, new ScreenReaderClient.Listener() {
-            @Override public void onReady() { speakUnspoken(); }
+            @Override public void onReady() { if (sr.isScreenReaderReady()) speakUnspoken(); }
             @Override public void onKey(String keyName, int action, boolean longPress) { }
         }, null);
         sr.bind();
@@ -57,7 +57,7 @@ public final class SetupService extends Service {
                             if (!RootQuery.exec("svc power reboot").ok()) throw new Exception("svc power reboot failed");
                         }
                     }, listener);
-            if (started) listener.say("Setting up the device.");
+            listener.say(started ? "Setting up the device." : "Continuing setup.");
             SetupEngine.Result result = engine.run(started);
             Log.i(TAG, "setup: " + result);
             if (result != SetupEngine.Result.RESTARTING) stopSelf();
@@ -77,9 +77,10 @@ public final class SetupService extends Service {
         return SetupEngine.resumesAfterBoot(new FileStore(context).load());
     }
 
+    /** Speak now if Orbit's screen reader is ready, or else as soon as it is. */
     private void say(String message) {
         synchronized (unspoken) {
-            if (sr == null || !sr.isReady()) { unspoken.add(message); return; }
+            if (sr == null || !sr.isScreenReaderReady()) { unspoken.add(message); return; }
         }
         sr.speak(message);
     }
