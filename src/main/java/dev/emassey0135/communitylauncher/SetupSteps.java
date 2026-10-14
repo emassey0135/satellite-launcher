@@ -39,8 +39,10 @@ import java.util.zip.ZipFile;
  * launcher as the home app. The settings that Orbit updates can undo are left to {@link DeviceSetup}, which this runs
  * last and the launcher runs again whenever Orbit's apps change.
  *
- * <p>The computer puts the files to install in {@link #PAYLOAD}; only adb and root can write there. Each is needed
- * only if it isn't installed already, so setup can run again without them.
+ * <p>What it installs is downloaded from where each is published, and checked: LSPosed against its checksum, apps
+ * against the key their makers sign them with. A computer can instead put files in {@link #PAYLOAD} (only adb and root
+ * can write there), which are used as they are, such as to set up without a network or to test a build. Each is needed
+ * only if it isn't installed already.
  */
 final class SetupSteps {
     static final String LAUNCHER = "dev.emassey0135.communitylauncher";
@@ -59,10 +61,19 @@ final class SetupSteps {
 
     /** LSPosed 1.9.2 (7024) for Zygisk, the version tested on both devices. */
     private static final String LSPOSED_ZIP = "lsposed.zip";
+    private static final String LSPOSED_URL =
+            "https://github.com/LSPosed/LSPosed/releases/download/v1.9.2/LSPosed-v1.9.2-7024-zygisk-release.zip";
     private static final String LSPOSED_SHA256 = "0ebc6bcb465d1c4b44b7220ab5f0252e6b4eb7fe43da74650476d2798bb29622";
     private static final int LSPOSED_VERSION = 7024;
     private static final String HOOK_APK = "orbit-hook.apk";
+    private static final String HOOK_URL =
+            "https://github.com/emassey0135/orbit-hook/releases/latest/download/orbit-hook.apk";
+    /** The SHA-256 of the hook's release signing certificate; until there is one, the hook isn't downloaded. */
+    private static final String HOOK_CERT = null;
     private static final String BACKTALK_APK = "backtalk.apk";
+    /** Backtalk's development builds, which it updates itself from. */
+    private static final String BACKTALK_URL = "https://github.com/trypsynth/backtalk/releases/download/dev/backtalk.apk";
+    private static final String BACKTALK_CERT = "8ddba1d5edf9b7470850b19f756e4755b6a4d99ee793d5d9b608918a91ba0eb0";
     /** The apps the hook runs in. */
     private static final String[] HOOK_SCOPE = {"com.orbit.screenreader", "com.orbit.alarmclock"};
     private static final String MAGISK_APP = "com.topjohnwu.magisk";
@@ -284,9 +295,10 @@ final class SetupSteps {
             }
             return Outcome.DONE;
         }
-        File zip = fetchPayload(LSPOSED_ZIP, "LSPosed");
+        File zip = fetchPayloadIfPresent(LSPOSED_ZIP);
+        if (zip == null) zip = download(LSPOSED_URL, LSPOSED_ZIP, "LSPosed");
         if (!LSPOSED_SHA256.equals(sha256(zip))) {
-            throw new StopException("The LSPosed file in the setup files isn't the version setup was tested with.");
+            throw new StopException("The LSPosed that setup got isn't the version setup was tested with.");
         }
         RootQuery.Result r = root("magisk --install-module " + zip);
         if (!r.ok()) {
@@ -302,20 +314,20 @@ final class SetupSteps {
     }
 
     /**
-     * Backtalk as it is, if it can use another app as a braille display; its updates come from Backtalk itself. The
-     * setup files' copy only if it can't.
+     * Backtalk as it is, if it can use another app as a braille display; its updates come from Backtalk itself.
+     * Otherwise Backtalk's own release, if that can.
      */
     private Outcome installBacktalk() throws Exception {
         if (installed(BACKTALK) != null && backtalkHasDisplayApi()) return Outcome.DONE;
         File apk = fetchPayloadIfPresent(BACKTALK_APK);
-        if (apk == null) {
-            throw new StopException(installed(BACKTALK) == null
-                    ? "Backtalk isn't installed, and the setup files don't include it."
-                    : "This version of Backtalk can't use the Orbit's keys. Update Backtalk, then start setup again.");
+        boolean downloaded = apk == null;
+        if (downloaded) apk = download(BACKTALK_URL, BACKTALK_APK, "Backtalk");
+        PackageInfo info = archiveInfo(apk, PackageManager.GET_PERMISSIONS);
+        if (info == null || !BACKTALK.equals(info.packageName) || (downloaded && !BACKTALK_CERT.equals(signer(info)))) {
+            throw new StopException("The Backtalk that setup got isn't Backtalk's own.");
         }
-        PackageInfo info = pm.getPackageArchiveInfo(apk.getPath(), PackageManager.GET_PERMISSIONS);
-        if (info == null || !BACKTALK.equals(info.packageName)) {
-            throw new StopException("The Backtalk file in the setup files isn't Backtalk.");
+        if (!definesDisplayPermission(info)) {
+            throw new StopException("This version of Backtalk can't use the Orbit's keys yet, so setup can't go on.");
         }
         install(apk, "Backtalk");
         if (!backtalkHasDisplayApi()) {
@@ -328,13 +340,15 @@ final class SetupSteps {
     private Outcome installHook() throws Exception {
         PackageInfo current = installed(HOOK);
         File apk = fetchPayloadIfPresent(HOOK_APK);
-        if (apk == null) {
-            if (current != null) return Outcome.DONE;
-            throw new StopException("The setup files don't include the Orbit hook.");
+        boolean downloaded = apk == null;
+        if (downloaded) {
+            if (current != null) return Outcome.DONE; // only a hook from the computer replaces an installed one
+            if (HOOK_CERT == null) throw new StopException("The setup files don't include the Orbit hook.");
+            apk = download(HOOK_URL, HOOK_APK, "the Orbit hook");
         }
-        PackageInfo info = pm.getPackageArchiveInfo(apk.getPath(), 0);
-        if (info == null || !HOOK.equals(info.packageName)) {
-            throw new StopException("The Orbit hook file in the setup files isn't the Orbit hook.");
+        PackageInfo info = archiveInfo(apk, 0);
+        if (info == null || !HOOK.equals(info.packageName) || (downloaded && !HOOK_CERT.equals(signer(info)))) {
+            throw new StopException("The Orbit hook that setup got isn't the Orbit hook.");
         }
         if (current != null && current.getLongVersionCode() >= info.getLongVersionCode()) return Outcome.DONE;
         install(apk, "the Orbit hook");
@@ -597,10 +611,45 @@ final class SetupSteps {
         return db;
     }
 
-    private File fetchPayload(String name, String what) throws StopException {
-        File f = fetchPayloadIfPresent(name);
-        if (f == null) throw new StopException("The setup files don't include " + what + ".");
-        return f;
+    /** Download {@code url} into this app's storage. */
+    private File download(String url, String name, String what) throws StopException {
+        listener.say("Downloading " + what + ".");
+        listener.log("downloading " + url);
+        File f = new File(cacheDir(), name);
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(30_000);
+            c.setReadTimeout(60_000);
+            if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
+            long length = c.getContentLengthLong();
+            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(f)) {
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            if (length >= 0 && f.length() != length) throw new Exception("got " + f.length() + " of " + length + " bytes");
+            return f;
+        } catch (Exception e) {
+            listener.log("download failed: " + e);
+            throw new StopException("Setup couldn't download " + what + ". Check that the device is connected to Wi-Fi, "
+                    + "then start setup again.");
+        }
+    }
+
+    private PackageInfo archiveInfo(File apk, int flags) {
+        return pm.getPackageArchiveInfo(apk.getPath(), flags | PackageManager.GET_SIGNATURES);
+    }
+
+    /** The SHA-256 of the certificate an APK is signed with, as apksigner prints it. */
+    private static String signer(PackageInfo info) throws Exception {
+        if (info.signatures == null || info.signatures.length != 1) return null;
+        return sha256(info.signatures[0].toByteArray());
+    }
+
+    private static boolean definesDisplayPermission(PackageInfo info) {
+        if (info.permissions == null) return false;
+        for (PermissionInfo p : info.permissions) if (BRAILLE_DISPLAY_PERMISSION.equals(p.name)) return true;
+        return false;
     }
 
     /** A copy of a file the computer provided, in this app's storage; null if it didn't provide it. */
