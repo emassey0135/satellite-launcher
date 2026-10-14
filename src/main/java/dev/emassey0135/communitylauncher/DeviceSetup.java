@@ -29,14 +29,14 @@ final class DeviceSetup {
      * alongside ours), and from 0.0.76 a service that shows it too and records usage to send to Orbit, plus the
      * daily alarm that sends it.
      */
-    private static final String[] DISABLED_COMPONENTS = {
+    static final String[] DISABLED_COMPONENTS = {
             "com.orbit.homelauncher/com.orbit.homelauncher.PowerOffService",
             "com.orbit.homelauncher/com.orbit.homelauncher.service.DeviceUsageTrackingService",
             "com.orbit.homelauncher/com.orbit.homelauncher.devicetracking.DailySyncAlarmReceiver",
     };
 
     /** Orbit's automation service, which accepts security prompts by itself and clicks around in the file picker. */
-    private static final String AUTOMATION_PACKAGE = "com.orbit.accessibilityserviceapp";
+    static final String AUTOMATION_PACKAGE = "com.orbit.accessibilityserviceapp";
 
     private static final String SCREEN_READER_SERVICE = "com.orbit.screenreader/.ScreenReaderAccessibilityService";
     /**
@@ -54,7 +54,7 @@ final class DeviceSetup {
         new Thread(() -> apply(app, rootGrants), "device-setup").start();
     }
 
-    private static synchronized void apply(Context context, boolean rootGrants) {
+    static synchronized void apply(Context context, boolean rootGrants) {
         PackageManager pm = context.getPackageManager();
         ContentResolver resolver = context.getContentResolver();
         List<String> commands = new ArrayList<>();

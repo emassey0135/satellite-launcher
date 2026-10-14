@@ -4,6 +4,7 @@
     <!-- A launcher lists every app. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".CommunityLauncherApp"
@@ -42,6 +43,16 @@
             android:authorities="dev.emassey0135.communitylauncher.guide"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <!-- Not exported: the computer starts it with root. -->
+        <service android:name=".SetupService" android:exported="false" />
+
+        <!-- Serves only the public step aside script, which setup opens with Backtalk through root. -->
+        <provider
+            android:name=".ScriptProvider"
+            android:authorities="dev.emassey0135.communitylauncher.scripts"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

@@ -17,9 +17,10 @@ import com.orbit.screenreader.IUARTKeypadCallback;
 /**
  * Wraps Orbit's screen reader service: binds to it, registers for keypad events, and speaks.
  *
- * Because the launcher's package name starts with {@code com.orbit.}, the screen reader routes the keypad to
- * whichever package last called {@link IScreenReaderService#notifyAppForeground}, so the launcher claims it
- * under its own real name. Speech goes out through {@code speakText}; navigation interrupts with {@code stopSpeaking}.
+ * The screen reader routes the keypad to whichever package last called
+ * {@link IScreenReaderService#notifyAppForeground}, so the launcher claims it under its own name. (The launcher's name
+ * doesn't start with {@code com.orbit.}, so it relies on the Orbit hook for Orbit to leave its window alone.) Speech
+ * goes out through {@code speakText}; navigation interrupts with {@code stopSpeaking}.
  */
 final class ScreenReaderClient {
     static final String TAG = LauncherModel.TAG;
@@ -42,9 +43,9 @@ final class ScreenReaderClient {
     }
 
     /**
-     * @param registrationName the package name to claim the keypad under. Keep it {@code com.orbit.}-prefixed so Orbit
-     *     routes keys natively. Use a distinct name (not the launcher's own) for a transient owner like the power
-     *     dialog, so unregistering it does not remove the launcher's registration.
+     * @param registrationName the package name to claim the keypad under. Use a distinct name (not the launcher's own) for a transient owner like the power
+     *     dialog, so unregistering it does not remove the launcher's registration. Null only speaks, and never takes
+     *     the keypad.
      */
     ScreenReaderClient(Context context, Listener listener, String registrationName) {
         this.context = context.getApplicationContext();
@@ -106,7 +107,7 @@ final class ScreenReaderClient {
     }
 
     void unbind() {
-        try { if (sr != null) sr.unregisterKeypadCallback(pkg); } catch (RemoteException ignored) { }
+        try { if (sr != null && pkg != null) sr.unregisterKeypadCallback(pkg); } catch (RemoteException ignored) { }
         try { if (sr != null) sr.unregisterSettingsCallback(settings); } catch (RemoteException ignored) { }
         try { context.unbindService(conn); } catch (Exception ignored) { }
     }
@@ -131,7 +132,7 @@ final class ScreenReaderClient {
     /** Register the keypad callback, and take the keypad while this screen is in the foreground. */
     void register() {
         IScreenReaderService s = sr;
-        if (s == null) return;
+        if (s == null || pkg == null) return;
         try {
             s.registerKeypadCallback(pkg, keys);
             if (foreground) s.notifyAppForeground(pkg);

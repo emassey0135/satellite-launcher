@@ -26,19 +26,49 @@ final class RootQuery {
 
     /** Run a command as root; returns combined output, or null on failure. Call off the main thread. */
     static String run(String command) {
+        Result r = exec(command);
+        return r.started ? r.output : null;
+    }
+
+    /** What a root command printed (with its errors) and how it exited. */
+    static final class Result {
+        /** Whether {@code su} could run the command at all. */
+        final boolean started;
+        final int exitCode;
+        final String output;
+
+        Result(boolean started, int exitCode, String output) {
+            this.started = started;
+            this.exitCode = exitCode;
+            this.output = output;
+        }
+
+        boolean ok() { return started && exitCode == 0; }
+    }
+
+    /** Run a command as root, keeping its exit code. Call off the main thread. */
+    static Result exec(String command) {
+        return exec(false, command);
+    }
+
+    /**
+     * Run a command as root in the device's own view of storage ({@code globalView}) rather than this app's, in which
+     * Android 11 hides other apps' data.
+     */
+    static Result exec(boolean globalView, String command) {
         Process p = null;
         try {
-            p = new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+            p = (globalView ? new ProcessBuilder("su", "--mount-master", "-c", command)
+                    : new ProcessBuilder("su", "-c", command)).redirectErrorStream(true).start();
             StringBuilder out = new StringBuilder();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) out.append(line).append('\n');
             }
-            p.waitFor();
-            return out.toString();
+            return new Result(true, p.waitFor(), out.toString());
         } catch (Exception e) {
             Log.w(TAG, "root command failed: " + e.getMessage());
-            return null;
+            return new Result(false, -1, "");
         } finally {
             if (p != null) p.destroy();
         }
