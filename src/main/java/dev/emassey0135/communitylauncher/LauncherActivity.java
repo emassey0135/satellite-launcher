@@ -3,9 +3,11 @@ package dev.emassey0135.communitylauncher;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -284,8 +286,8 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
                 break;
             case "battery":
                 speakInBackground(() -> {
-                    int b = sr.battery();
-                    return b < 0 ? "Battery status unavailable" : "Battery " + b + " percent";
+                    String b = batteryText();
+                    return b == null ? "Battery status unavailable" : b;
                 });
                 break;
             case "sr_settings":
@@ -294,13 +296,13 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
                 break;
             case "about":
                 speakInBackground(() -> {
-                    int b = sr.battery();
+                    String b = batteryText();
                     String fw = sr.firmware();
                     String serial = sr.serial();
                     StringBuilder sb = new StringBuilder("About device. ");
                     if (serial != null) sb.append("Serial ").append(serial).append(". ");
                     if (fw != null) sb.append("Firmware ").append(fw).append(". ");
-                    if (b >= 0) sb.append("Battery ").append(b).append(" percent.");
+                    if (b != null) sb.append(b).append('.');
                     return sb.toString();
                 });
                 break;
@@ -325,6 +327,26 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             default:
                 toast("Not available");
         }
+    }
+
+    /**
+     * The battery level, or null if neither Orbit nor Android knows it. On the Orbit Player, Orbit's screen reader works
+     * out its own level from the battery's voltage and current, which can differ from Android's; until it is known which
+     * is more reliable, both are given when they differ. While Orbit is still working its level out, Android's is given.
+     */
+    private String batteryText() {
+        int orbit = sr.battery();
+        Intent status = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        int system = -1;
+        if (status != null) {
+            int level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+            if (level >= 0 && scale > 0) system = Math.round(level * 100f / scale);
+        }
+        if (orbit < 0 && system < 0) return null;
+        if (orbit < 0 || orbit == system) return "Battery " + (orbit < 0 ? system : orbit) + " percent";
+        if (system < 0) return "Battery " + orbit + " percent";
+        return "Battery " + orbit + " percent by Orbit, " + system + " percent by Android";
     }
 
     /** Speak what {@code text} returns, getting it off the main thread: the screen reader may ask the keypad for it. */
