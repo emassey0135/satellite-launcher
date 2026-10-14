@@ -11,6 +11,7 @@ import android.content.Intent;
  */
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
+        if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
         send(context, "com.orbit.ALARM_DATA", "com.orbit.alarmclock");
         send(context, "com.orbit.CALENDAR_DATA", "com.orbit.calendar");
         DeviceSetup.applyInBackground(context, false);

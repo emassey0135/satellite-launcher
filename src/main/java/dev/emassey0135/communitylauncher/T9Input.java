@@ -3,6 +3,8 @@ package dev.emassey0135.communitylauncher;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.util.Locale;
+
 /**
  * Multi-tap (T9) letter entry for the Orbit Player's phone keypad, behaving like the edit fields in Orbit's own apps.
  *
@@ -41,7 +43,7 @@ final class T9Input {
     private static final String[] SYMBOLS =
             {" ", ".,?!", "-@_;", ":/\\|", "#$%^", "&*'`", "(){}", "{}<>", "\"~°№", "+=©•"};
     static {
-        for (int i = 0; i < LOWERCASE.length; i++) UPPERCASE[i] = LOWERCASE[i].toUpperCase();
+        for (int i = 0; i < LOWERCASE.length; i++) UPPERCASE[i] = LOWERCASE[i].toUpperCase(Locale.ROOT);
     }
 
     private final Host host;

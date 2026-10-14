@@ -3,7 +3,9 @@ package dev.emassey0135.communitylauncher;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -14,6 +16,10 @@ import android.widget.TextView;
 
 import dev.emassey0135.communitylauncher.LauncherModel.Node;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -22,6 +28,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * The home screen. A stack of {@link Frame}s drives navigation; the top frame handles keys. Browse frames show a
@@ -67,7 +76,8 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     @Override protected void onResume() {
         super.onResume();
         inFront = true;
-        model.refreshApps(); // apps may have been installed, removed, enabled or disabled meanwhile
+        model.refreshApps(() -> render(false)); // apps may have been installed, removed, enabled or disabled meanwhile
+        if (started) refreshLicense(false);    // Plus may have been bought or have run out meanwhile
         if (sr != null) sr.register();
         if (frame() != null) frame().requestTitle(); // returning from an app: re-announce as a focus change
         render(true);
@@ -75,8 +85,8 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     /**
      * Hold the keypad only while the launcher's window has focus. A system window over it (an app-not-responding or
-     * crash dialog, a SystemUI pop-up) takes focus without pausing the launcher, and BackTalk reads and drives that
-     * window, so the keypad must stay with BackTalk until it closes.
+     * crash dialog, a SystemUI pop-up) takes focus without pausing the launcher, and Backtalk reads and drives that
+     * window, so the keypad must stay with Backtalk until it closes.
      */
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -128,6 +138,8 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     }
 
     private void handleKey(String keyName, int action, boolean longPress) {
+        // A window over the launcher (a system dialog) has the keypad; a key that was on its way when it opened isn't ours.
+        if (!hasWindowFocus()) return;
         // The first key from a phone keypad (the Orbit Player, which has no Plus tier) shows the Plus apps.
         if (model.setPhoneKeypad(sr.isPhoneKeypad())) render(false);
         if (frame() instanceof TextEntryFrame) { ((TextEntryFrame) frame()).key(keyName, action, longPress); return; }
@@ -152,7 +164,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         }
         if (action == 3) {
             if (keyName.equals("SPACE_DOT1_DOT3_DOT4")) frame().menu();
-            else if (keyName.equals("SPACE_DOT1_DOT2_DOT3_DOT5")) openRecents(); // Space+r: recents, as in BackTalk
+            else if (keyName.equals("SPACE_DOT1_DOT2_DOT3_DOT5")) openRecents(); // Space+r: recents, as in Backtalk
             else if (keyName.equals("SPACE_DOT1_DOT3_DOT4_DOT5")) openNotifications(); // Space+n: notification shade
             else if (keyName.equals("SPACE_DOT1_DOT3_DOT5_DOT6")
                     || keyName.equals("SPACE_DOT1_DOT2_DOT3_DOT4_DOT5_DOT6")) goHome();
@@ -229,12 +241,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         if (asFocus) sr.focusChanged(b); else sr.itemChanged(b);
     }
 
-    private String positional(Frame f) {
-        if (f.isText()) return f.labelAt(0);
-        if (f.size() == 0) return f.title() + ", empty";
-        return f.labelAt(f.index()) + ", " + (f.index() + 1) + " of " + f.size();
-    }
-
     private void toast(String msg) { if (sr != null) sr.speak(msg); }
 
     private void rescheduleOrbitAgendas() {
@@ -276,26 +282,28 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             case "date":
                 sr.speak(new SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(new Date()));
                 break;
-            case "battery": {
-                int b = sr.battery();
-                sr.speak(b < 0 ? "Battery status unavailable" : "Battery " + b + " percent");
+            case "battery":
+                speakInBackground(() -> {
+                    int b = sr.battery();
+                    return b < 0 ? "Battery status unavailable" : "Battery " + b + " percent";
+                });
                 break;
-            }
             case "sr_settings":
                 launchComponent("com.orbit.screenreader", "com.orbit.screenreader.settings.SettingsActivity",
                         "Screen Reader Settings");
                 break;
-            case "about": {
-                int b = sr.battery();
-                String fw = sr.firmware();
-                String serial = sr.serial();
-                StringBuilder sb = new StringBuilder("About device. ");
-                if (serial != null) sb.append("Serial ").append(serial).append(". ");
-                if (fw != null) sb.append("Firmware ").append(fw).append(". ");
-                if (b >= 0) sb.append("Battery ").append(b).append(" percent.");
-                sr.speak(sb.toString());
+            case "about":
+                speakInBackground(() -> {
+                    int b = sr.battery();
+                    String fw = sr.firmware();
+                    String serial = sr.serial();
+                    StringBuilder sb = new StringBuilder("About device. ");
+                    if (serial != null) sb.append("Serial ").append(serial).append(". ");
+                    if (fw != null) sb.append("Firmware ").append(fw).append(". ");
+                    if (b >= 0) sb.append("Battery ").append(b).append(" percent.");
+                    return sb.toString();
+                });
                 break;
-            }
             case "plus":
                 refreshLicense(true);
                 break;
@@ -319,8 +327,16 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         }
     }
 
+    /** Speak what {@code text} returns, getting it off the main thread: the screen reader may ask the keypad for it. */
+    private void speakInBackground(Supplier<String> text) {
+        new Thread(() -> {
+            String s = text.get();
+            main.post(() -> sr.speak(s));
+        }, "device-info").start();
+    }
+
     /**
-     * Open the stock Android app switcher (Overview), where BackTalk reads recent apps and their close action. The
+     * Open the stock Android app switcher (Overview), where Backtalk reads recent apps and their close action. The
      * launcher is not an accessibility service, so it can't call performGlobalAction(RECENTS); instead it presses the
      * recents key via root, which opens the same Overview.
      */
@@ -328,40 +344,57 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         new Thread(() -> RootQuery.run("input keyevent 187"), "recents").start(); // KEYCODE_APP_SWITCH
     }
 
-    /** Open the notification shade, where BackTalk reads notifications and their actions (e.g. dismiss, reply). */
+    /** Open the notification shade, where Backtalk reads notifications and their actions (e.g. dismiss, reply). */
     private void openNotifications() {
         new Thread(() -> RootQuery.run("cmd statusbar expand-notifications"), "notifications").start();
     }
 
     // ---- user guide -------------------------------------------------------------
 
-    /** Open the Orbit user guide (from Orbit's installed APK) in the Book Reader, as Orbit's launcher does. */
+    /**
+     * Open the Orbit user guide (from Orbit's installed APK) in the Book Reader, as Orbit's launcher does. It is copied
+     * out of the APK off the main thread.
+     */
     private void openUserGuide() {
-        try {
-            String lang = java.util.Locale.getDefault().getLanguage().toLowerCase(java.util.Locale.ROOT);
-            android.content.pm.ApplicationInfo ai = getPackageManager().getApplicationInfo("com.orbit.homelauncher", 0);
-            java.util.zip.ZipFile zip = new java.util.zip.ZipFile(ai.sourceDir);
-            java.util.zip.ZipEntry e = zip.getEntry("assets/userGuide/user_guide_" + lang + ".docx");
+        String lang = Locale.getDefault().getLanguage().toLowerCase(Locale.ROOT);
+        File out = new File(getCacheDir(), GuideProvider.FILE);
+        new Thread(() -> {
+            String problem;
+            try {
+                problem = extractUserGuide(lang, out) ? null : "User guide not found";
+            } catch (Exception e) {
+                problem = "Could not open the user guide";
+            }
+            String error = problem;
+            main.post(() -> { if (error != null) toast(error); else showUserGuide(out); });
+        }, "user-guide").start();
+    }
+
+    /** Copy the guide in the device's language, else English, to {@code out}; false if Orbit's launcher has neither. */
+    private boolean extractUserGuide(String lang, File out) throws Exception {
+        ApplicationInfo ai = getPackageManager().getApplicationInfo("com.orbit.homelauncher", 0);
+        try (ZipFile zip = new ZipFile(ai.sourceDir)) {
+            ZipEntry e = zip.getEntry("assets/userGuide/user_guide_" + lang + ".docx");
             if (e == null) e = zip.getEntry("assets/userGuide/user_guide_en.docx");
-            if (e == null) { zip.close(); toast("User guide not found"); return; }
-            java.io.File out = new java.io.File(getCacheDir(), GuideProvider.FILE);
-            try (java.io.InputStream in = zip.getInputStream(e); java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+            if (e == null) return false;
+            try (InputStream in = zip.getInputStream(e); OutputStream os = new FileOutputStream(out)) {
                 byte[] buf = new byte[8192]; int n;
                 while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
             }
-            zip.close();
-            android.net.Uri uri = android.net.Uri.parse("content://" + getPackageName() + ".guide/" + GuideProvider.FILE);
-            Intent i = new Intent(Intent.ACTION_VIEW).setPackage("com.orbit.bookreader")
-                    .setDataAndType(uri, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK)
-                    .putExtra("path", out.getPath())
-                    .putExtra("skip_db_entry", true)
-                    .putExtra("from_where", "CommunityLauncher");
-            sr.speak("Opening User Guide");
-            startActivity(i);
-        } catch (Exception ex) {
-            toast("Could not open the user guide");
+            return true;
         }
+    }
+
+    private void showUserGuide(File file) {
+        Uri uri = Uri.parse("content://" + getPackageName() + ".guide/" + GuideProvider.FILE);
+        Intent i = new Intent(Intent.ACTION_VIEW).setPackage("com.orbit.bookreader")
+                .setDataAndType(uri, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("path", file.getPath())
+                .putExtra("skip_db_entry", true)
+                .putExtra("from_where", "CommunityLauncher");
+        sr.speak("Opening User Guide");
+        try { startActivity(i); } catch (Exception e) { toast("Could not open the user guide"); }
     }
 
     // ---- format SD card ---------------------------------------------------------
@@ -384,7 +417,8 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             final String target = disk;
             if (target == null) { main.post(() -> toast("No SD card found")); return; }
             String result = RootQuery.run("sm partition " + target + " public");
-            boolean ok = result != null && !result.toLowerCase().contains("error") && !result.toLowerCase().contains("exception");
+            String lower = result == null ? "" : result.toLowerCase(Locale.ROOT);
+            boolean ok = result != null && !lower.contains("error") && !lower.contains("exception");
             main.post(() -> toast(ok ? "SD card formatted" : "Could not format the SD card"));
         }, "format-sd").start();
     }

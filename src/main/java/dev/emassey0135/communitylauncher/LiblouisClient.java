@@ -11,6 +11,7 @@ import android.util.Log;
 import com.orbit.liblouisservice.ILiblouisServiceInterface;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -19,16 +20,12 @@ import java.util.Map;
  */
 final class LiblouisClient {
     private static final String TAG = LauncherModel.TAG;
-    private static final int MODE = 132; // the mode Orbit passes for braille-to-text of typed cells
     private static final String SETTINGS = "content://com.orbit.settings.provider/preferences/";
     private static final String DEFAULT_TABLE = "en-ueb-g2.ctb";
-
-    private static final String DEFAULT_ECHO_TABLE = "en-ueb-g1.ctb";
 
     private final Context context;
     private volatile ILiblouisServiceInterface svc;
     private volatile String table = DEFAULT_TABLE;      // user's current table, for the committed name
-    private volatile String echoTable = DEFAULT_ECHO_TABLE; // uncontracted, for per-letter echo
 
     LiblouisClient(Context context) { this.context = context.getApplicationContext(); }
 
@@ -81,15 +78,13 @@ final class LiblouisClient {
         String mode = values.get("key_selection_mode");
         String key = "key_contracted_braille_input_table";
         if (mode != null) {
-            String m = mode.toLowerCase();
+            String m = mode.toLowerCase(Locale.ROOT);
             if (m.contains("uncontract")) key = "key_uncontracted_braille_input_table";
             else if (m.contains("computer")) key = "key_computer_braille_input_table";
         }
         String t = values.get(key);
         if (t != null && !t.isEmpty()) table = t;
-        String e = values.get("key_uncontracted_braille_input_table");
-        if (e != null && !e.isEmpty()) echoTable = e;
-        Log.d(TAG, "braille input table = " + table + ", echo table = " + echoTable);
+        Log.d(TAG, "braille input table = " + table);
     }
 
     /** Parse the output of the marked multi-query: each {@code @@key} line is followed by that key's row. */
@@ -112,34 +107,6 @@ final class LiblouisClient {
 
     boolean isReady() { return svc != null; }
 
-    /** Translate a sequence of dot-bit masks to text. Returns null if the translator is unavailable. */
-    String translate(int[] cells, int count) {
-        ILiblouisServiceInterface s = svc;
-        if (s == null || count == 0) return count == 0 ? "" : null;
-        StringBuilder sb = new StringBuilder(count);
-        for (int i = 0; i < count; i++) sb.append((char) (0x8000 | (cells[i] & 0xFF)));
-        try {
-            CharSequence out = s.translateBrailleToText(sb.toString(), MODE, table);
-            return out == null ? null : out.toString();
-        } catch (RemoteException e) {
-            Log.w(TAG, "translate failed", e);
-            return null;
-        }
-    }
-
-    /**
-     * Text for a single typed cell, for echo. Tries the uncontracted table first so a letter reads as itself
-     * (e.g. t, not the word-sign "that"); if that yields nothing, falls back to the contracted table so a
-     * group-sign reads as its letters (e.g. the dots-3-4 cell reads "st"). Null if unavailable, "" if a pending sign.
-     */
-    String echo(int mask) {
-        String uncontracted = translateCell(mask, echoTable);
-        if (uncontracted == null) return null;
-        if (!uncontracted.isEmpty()) return uncontracted;
-        String contracted = translateCell(mask, table);
-        return contracted == null ? "" : contracted;
-    }
-
     /** Translate a list of cell masks in the user's current table at the given liblouis mode (388 live, 132 commit). */
     String translateContracted(java.util.List<Integer> cells, int mode) {
         ILiblouisServiceInterface s = svc;
@@ -151,23 +118,6 @@ final class LiblouisClient {
             return out == null ? null : out.toString();
         } catch (RemoteException e) {
             Log.w(TAG, "translateContracted failed", e);
-            return null;
-        }
-    }
-
-    /** A single cell in the uncontracted table: a plain letter reads as itself. "" for a contraction-only cell. */
-    String echoUncontracted(int mask) {
-        String s = translateCell(mask, echoTable);
-        return s == null ? null : s;
-    }
-
-    private String translateCell(int mask, String tbl) {
-        ILiblouisServiceInterface s = svc;
-        if (s == null) return null;
-        try {
-            CharSequence out = s.translateBrailleToText(String.valueOf((char) (0x8000 | (mask & 0xFF))), MODE, tbl);
-            return out == null ? "" : out.toString();
-        } catch (RemoteException e) {
             return null;
         }
     }

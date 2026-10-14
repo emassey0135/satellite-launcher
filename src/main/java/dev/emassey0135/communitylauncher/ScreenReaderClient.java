@@ -121,7 +121,7 @@ final class ScreenReaderClient {
     /**
      * Whether this screen should hold the keypad. A screen that can be covered by a system window (an app-not-responding
      * dialog, a SystemUI pop-up) sets this from its window focus, so the keypad is left to the reader driving the cover
-     * (BackTalk) until it closes, and taken back when focus returns.
+     * (Backtalk) until it closes, and taken back when focus returns.
      */
     void setForeground(boolean foreground) {
         this.foreground = foreground;

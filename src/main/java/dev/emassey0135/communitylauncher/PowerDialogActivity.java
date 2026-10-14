@@ -7,7 +7,8 @@ import android.os.Looper;
 
 /**
  * The power options (Shut Down / Restart / Cancel), shown as a dialog over whatever app is in front when the hardware
- * power button is pressed. {@link PowerButtonReceiver} launches it in place of Orbit's own power dialog.
+ * power button is pressed. The power button receiver in {@link CommunityLauncherApp} launches it in place of Orbit's own
+ * power dialog.
  *
  * <p>It takes the keypad under a name of its own ({@link #KEYPAD_NAME}) so dismissing it does not disturb the launcher's
  * own keypad registration; when it closes, the app underneath reclaims the keypad as usual.
@@ -39,9 +40,15 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
         });
     }
 
+    /** Keys as in the launcher: Up and Down move, Right, OK and dot 8 choose, Left, BACK and dot 7 close. */
     @Override public void onKey(String keyName, int action, boolean longPress) {
-        if (action != 0) return;
         main.post(() -> {
+            if (action == 1) {
+                if (keyName.equals("DOT7")) finish();
+                else if (keyName.equals("DOT8")) activate();
+                return;
+            }
+            if (action != 0) return;
             switch (keyName) {
                 case "UP":
                     index = (index + LABELS.length - 1) % LABELS.length;
@@ -54,7 +61,7 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
                 case "OK": case "SELECT": case "RIGHT":
                     activate();
                     break;
-                case "LEFT":
+                case "LEFT": case "BACK":
                     finish();
                     break;
                 default:

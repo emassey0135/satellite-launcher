@@ -6,16 +6,21 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.AtomicFile;
 import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,7 +35,7 @@ import java.util.Set;
  * reconciled with installed launchables: entries for removed apps drop out, newly installed apps appear.
  *
  * Plus gating covers only Orbit's own Plus apps: without an active Plus license those are hidden from view (not
- * removed), so they reappear if the license becomes active. The Android Apps folder is never gated, since BackTalk,
+ * removed), so they reappear if the license becomes active. The Android Apps folder is never gated, since Backtalk,
  * not Orbit, reads third-party apps. Apps are grouped by whether they self-voice (Orbit's own or the
  * orbit.self_voicing flag) into the main menu, versus the Android Apps folder for the rest.
  */
@@ -84,15 +89,16 @@ final class LauncherModel {
     final Context context;
     final Node root = Node.folder("Home");
     final Set<String> hidden = new HashSet<>();
-    private final File file;
+    private final AtomicFile file;
     private final SharedPreferences prefs;
+    private final Handler main = new Handler(Looper.getMainLooper());
     boolean licensed;
     /** Whether this device has a Plus tier at all: the Orbit Player (phone keypad) is sold in one version with every app. */
     boolean plusTier;
 
     LauncherModel(Context context) {
         this.context = context;
-        this.file = new File(context.getFilesDir(), "menu.json");
+        this.file = new AtomicFile(new File(context.getFilesDir(), "menu.json"));
         this.prefs = context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
         this.licensed = prefs.getBoolean("licensed", true); // optimistic until a read says otherwise
         this.plusTier = !prefs.getBoolean("phone_keypad", false);
@@ -106,7 +112,7 @@ final class LauncherModel {
 
     /**
      * Whether a node is shown given the current license state. Only Orbit's own Plus apps need a Plus license; the
-     * Android Apps folder is always shown, since BackTalk (not Orbit's screen reader) reads third-party apps, so Plus
+     * Android Apps folder is always shown, since Backtalk (not Orbit's screen reader) reads third-party apps, so Plus
      * is not effectively buying anything for them.
      */
     boolean isVisible(Node n) {
@@ -146,13 +152,13 @@ final class LauncherModel {
         Map<String, String> installed = launchableApps();
         boolean loaded = false;
         try {
-            if (file.exists()) {
-                JSONObject o = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-                JSONArray h = o.optJSONArray("hidden");
-                if (h != null) for (int i = 0; i < h.length(); i++) hidden.add(h.getString(i));
-                JSONArray t = o.optJSONArray("tree");
-                if (t != null) { readInto(root, t); loaded = true; }
-            }
+            JSONObject o = new JSONObject(new String(file.readFully(), StandardCharsets.UTF_8));
+            JSONArray h = o.optJSONArray("hidden");
+            if (h != null) for (int i = 0; i < h.length(); i++) hidden.add(h.getString(i));
+            JSONArray t = o.optJSONArray("tree");
+            if (t != null) { readInto(root, t); loaded = true; }
+        } catch (FileNotFoundException e) {
+            // first run: build the default menu
         } catch (Exception e) {
             Log.e(TAG, "menu load failed, rebuilding", e);
             root.children.clear();
@@ -165,14 +171,19 @@ final class LauncherModel {
     }
 
     /**
-     * Pick up apps installed, removed, enabled or disabled since the menu was loaded (e.g. from the Play Store). Folders
+     * Pick up apps installed, removed, enabled or disabled since the menu was loaded (e.g. from the Play Store). The
+     * installed apps are read off the main thread; the tree is then updated on it and {@code onDone} runs. Folders
      * are kept as the same objects, so open menus stay valid.
      */
-    void refreshApps() {
-        Map<String, String> installed = launchableApps();
-        reconcile(installed);
-        resolveLabels(root, installed);
-        save();
+    void refreshApps(Runnable onDone) {
+        new Thread(() -> {
+            Map<String, String> installed = launchableApps();
+            main.post(() -> {
+                if (reconcile(installed)) save();
+                resolveLabels(root, installed);
+                onDone.run();
+            });
+        }, "refresh-apps").start();
     }
 
     private void readInto(Node parent, JSONArray arr) throws Exception {
@@ -242,33 +253,41 @@ final class LauncherModel {
         for (String p : pkgs) if (installed.containsKey(p)) { folder.children.add(Node.app(p)); used.add(p); }
     }
 
-    private void reconcile(Map<String, String> installed) {
+    /** Drop apps that are gone and place new ones; returns whether the tree changed. */
+    private boolean reconcile(Map<String, String> installed) {
         Set<String> placed = new HashSet<>();
-        pruneAndCollect(root, installed.keySet(), placed);
-        Node androidApps = null;
-        for (Node n : root.children) if (n.isFolder() && ANDROID_APPS.equals(n.folderName)) androidApps = n;
+        boolean changed = pruneAndCollect(root, installed.keySet(), placed);
         for (String pkg : installed.keySet()) {
             if (pkg.equals(context.getPackageName()) || placed.contains(pkg) || hidden.contains(pkg) || EXCLUDED.contains(pkg)) continue;
-            if (isSelfVoicing(pkg)) {
-                root.children.add(Node.app(pkg));
-            } else {
-                if (androidApps == null) { androidApps = Node.folder(ANDROID_APPS); root.children.add(androidApps); }
-                androidApps.children.add(Node.app(pkg));
-            }
+            place(Node.app(pkg));
+            changed = true;
         }
+        return changed;
     }
 
-    private void pruneAndCollect(Node folder, Set<String> installed, Set<String> placed) {
+    /** Add a newly shown app where it belongs: the main menu if it self-voices, else the Android Apps folder. */
+    private void place(Node app) {
+        if (isSelfVoicing(app.pkg)) { root.children.add(app); return; }
+        Node androidApps = null;
+        for (Node n : root.children) if (n.isFolder() && ANDROID_APPS.equals(n.folderName)) androidApps = n;
+        if (androidApps == null) { androidApps = Node.folder(ANDROID_APPS); root.children.add(androidApps); }
+        androidApps.children.add(app);
+    }
+
+    private boolean pruneAndCollect(Node folder, Set<String> installed, Set<String> placed) {
+        boolean changed = false;
         for (int i = folder.children.size() - 1; i >= 0; i--) {
             Node n = folder.children.get(i);
             if (n.isFolder()) {
-                pruneAndCollect(n, installed, placed);
+                changed |= pruneAndCollect(n, installed, placed);
             } else if (n.isApp() && (!installed.contains(n.pkg) || hidden.contains(n.pkg) || placed.contains(n.pkg) || EXCLUDED.contains(n.pkg))) {
                 folder.children.remove(i);
+                changed = true;
             } else if (n.isApp()) {
                 placed.add(n.pkg);
             }
         }
+        return changed;
     }
 
     /**
@@ -324,14 +343,20 @@ final class LauncherModel {
         }
     }
 
+    /** Write the menu. The old file stays in place until the new one is complete, so a crash can't lose the layout. */
     void save() {
+        FileOutputStream out = null;
         try {
             JSONObject o = new JSONObject();
             o.put("version", 1);
             o.put("tree", writeNodes(root.children));
             o.put("hidden", new JSONArray(hidden));
-            Files.write(file.toPath(), o.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] bytes = o.toString().getBytes(StandardCharsets.UTF_8);
+            out = file.startWrite();
+            out.write(bytes);
+            file.finishWrite(out);
         } catch (Exception e) {
+            if (out != null) file.failWrite(out);
             Log.e(TAG, "menu save failed", e);
         }
     }
@@ -350,17 +375,19 @@ final class LauncherModel {
 
     // ---- queries & mutations ----------------------------------------------------
 
+    /** Launchable apps as pkg -> label, sorted by label. An app with several launcher activities takes the alphabetically first label. */
     private Map<String, String> launchableApps() {
         PackageManager pm = context.getPackageManager();
-        Intent main = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        List<ResolveInfo> infos = pm.queryIntentActivities(main, 0);
-        List<ResolveInfo> sorted = new ArrayList<>(infos);
-        sorted.sort((a, b) -> a.loadLabel(pm).toString().compareToIgnoreCase(b.loadLabel(pm).toString()));
-        Map<String, String> out = new LinkedHashMap<>();
-        for (ResolveInfo ri : sorted) {
-            String pkg = ri.activityInfo.packageName;
-            if (!out.containsKey(pkg)) out.put(pkg, ri.loadLabel(pm).toString());
+        Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        Map<String, String> labels = new HashMap<>();
+        for (ResolveInfo ri : pm.queryIntentActivities(launcher, 0)) {
+            String label = ri.loadLabel(pm).toString(); // loading a label is slow, so each is loaded once
+            labels.merge(ri.activityInfo.packageName, label, (a, b) -> a.compareToIgnoreCase(b) <= 0 ? a : b);
         }
+        List<Map.Entry<String, String>> sorted = new ArrayList<>(labels.entrySet());
+        sorted.sort((a, b) -> a.getValue().compareToIgnoreCase(b.getValue()));
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : sorted) out.put(e.getKey(), e.getValue());
         return out;
     }
 
@@ -431,14 +458,7 @@ final class LauncherModel {
         if (!hidden.remove(pkg)) return;
         Node app = Node.app(pkg);
         app.appLabel = labelForPackage(pkg);
-        if (pkg.startsWith("com.orbit.")) {
-            root.children.add(app);
-        } else {
-            Node android = null;
-            for (Node n : root.children) if (n.isFolder() && ANDROID_APPS.equals(n.folderName)) android = n;
-            if (android == null) { android = Node.folder(ANDROID_APPS); root.children.add(android); }
-            android.children.add(app);
-        }
+        place(app);
         save();
     }
 }
