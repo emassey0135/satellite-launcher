@@ -60,11 +60,10 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         setContentView(view);
 
         model = new LauncherModel(this);
-        model.load();
-        rescheduleOrbitAgendas();
-
         stack.push(new BrowseFrame(model.root));
         render(false);
+        model.load(() -> render(true));
+        rescheduleOrbitAgendas();
 
         sr = new ScreenReaderClient(this, this);
         sr.setForeground(false); // until the window has focus: see onWindowFocusChanged
@@ -139,7 +138,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     private void handleKey(String keyName, int action, boolean longPress) {
         // A window over the launcher (a system dialog) has the keypad; a key that was on its way when it opened isn't ours.
-        if (!hasWindowFocus()) return;
+        if (!hasWindowFocus() || !model.isLoaded()) return;
         // The first key from a phone keypad (the Orbit Player, which has no Plus tier) shows the Plus apps.
         if (model.setPhoneKeypad(sr.isPhoneKeypad())) render(false);
         if (frame() instanceof TextEntryFrame) { ((TextEntryFrame) frame()).key(keyName, action, longPress); return; }
@@ -211,6 +210,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     private static final int ROLE_BUTTON = 1, ROLE_LIST_BOX = 5, ROLE_EDIT_BOX = 6;
 
     private void render(boolean speak) {
+        if (!model.isLoaded()) { view.setText("Loading"); return; } // announced once loaded
         Frame f = frame();
         String item = f.size() == 0 ? "Empty" : f.labelAt(f.index());
         view.setText(f.title() + "\n\n" + item + (!f.isText() && f.size() > 0 ? "\n\n" + (f.index() + 1) + " of " + f.size() : ""));

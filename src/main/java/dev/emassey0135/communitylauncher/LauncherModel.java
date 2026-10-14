@@ -39,7 +39,7 @@ import java.util.Set;
  * not Orbit, reads third-party apps. Apps are grouped by whether they self-voice (Orbit's own or the
  * orbit.self_voicing flag) into the main menu, versus the Android Apps folder for the rest.
  */
-final class LauncherModel {
+class LauncherModel { // not final: tests replace isSelfVoicing, which needs a PackageManager
     static final String TAG = "CommunityLauncher";
     static final String ANDROID_APPS = "Android Apps";
 
@@ -93,6 +93,8 @@ final class LauncherModel {
     private final SharedPreferences prefs;
     private final Handler main = new Handler(Looper.getMainLooper());
     boolean licensed;
+    /** Whether {@link #load} has finished; until then the tree is empty. */
+    private boolean loaded;
     /** Whether this device has a Plus tier at all: the Orbit Player (phone keypad) is sold in one version with every app. */
     boolean plusTier;
 
@@ -148,26 +150,53 @@ final class LauncherModel {
 
     // ---- load / reconcile / save ------------------------------------------------
 
-    void load() {
-        Map<String, String> installed = launchableApps();
-        boolean loaded = false;
-        try {
-            JSONObject o = new JSONObject(new String(file.readFully(), StandardCharsets.UTF_8));
-            JSONArray h = o.optJSONArray("hidden");
-            if (h != null) for (int i = 0; i < h.length(); i++) hidden.add(h.getString(i));
-            JSONArray t = o.optJSONArray("tree");
-            if (t != null) { readInto(root, t); loaded = true; }
-        } catch (FileNotFoundException e) {
-            // first run: build the default menu
-        } catch (Exception e) {
-            Log.e(TAG, "menu load failed, rebuilding", e);
-            root.children.clear();
+    boolean isLoaded() { return loaded; }
+
+    /**
+     * Load the saved menu, or build the default one, and reconcile it with the installed apps. The file and the
+     * installed apps are read off the main thread; the tree is then built on it and {@code onLoaded} runs.
+     */
+    void load(Runnable onLoaded) {
+        new Thread(() -> {
+            Map<String, String> installed = launchableApps();
+            String json = null;
+            try {
+                json = new String(file.readFully(), StandardCharsets.UTF_8);
+            } catch (FileNotFoundException e) {
+                // first run: build the default menu
+            } catch (Exception e) {
+                Log.e(TAG, "menu read failed, rebuilding", e);
+            }
+            String saved = json;
+            main.post(() -> {
+                restore(saved, installed);
+                save();
+                onLoaded.run();
+            });
+        }, "load-menu").start();
+    }
+
+    /** Build the tree from the saved menu ({@code json}, or null for none) and the installed apps (pkg -> label). */
+    void restore(String json, Map<String, String> installed) {
+        boolean restored = false;
+        if (json != null) {
+            try {
+                JSONObject o = new JSONObject(json);
+                JSONArray h = o.optJSONArray("hidden");
+                if (h != null) for (int i = 0; i < h.length(); i++) hidden.add(h.getString(i));
+                JSONArray t = o.optJSONArray("tree");
+                if (t != null) { readInto(root, t); restored = true; }
+            } catch (Exception e) {
+                Log.e(TAG, "menu load failed, rebuilding", e);
+                hidden.clear();
+                root.children.clear();
+            }
         }
-        if (!loaded) buildDefault(installed);
+        if (!restored) buildDefault(installed);
         reconcile(installed);
         ensureBuiltins();
         resolveLabels(root, installed);
-        save();
+        loaded = true;
     }
 
     /**
@@ -176,6 +205,7 @@ final class LauncherModel {
      * are kept as the same objects, so open menus stay valid.
      */
     void refreshApps(Runnable onDone) {
+        if (!loaded) return; // loading picks them up
         new Thread(() -> {
             Map<String, String> installed = launchableApps();
             main.post(() -> {
@@ -254,7 +284,7 @@ final class LauncherModel {
     }
 
     /** Drop apps that are gone and place new ones; returns whether the tree changed. */
-    private boolean reconcile(Map<String, String> installed) {
+    boolean reconcile(Map<String, String> installed) {
         Set<String> placed = new HashSet<>();
         boolean changed = pruneAndCollect(root, installed.keySet(), placed);
         for (String pkg : installed.keySet()) {
@@ -347,11 +377,7 @@ final class LauncherModel {
     void save() {
         FileOutputStream out = null;
         try {
-            JSONObject o = new JSONObject();
-            o.put("version", 1);
-            o.put("tree", writeNodes(root.children));
-            o.put("hidden", new JSONArray(hidden));
-            byte[] bytes = o.toString().getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = toJson().getBytes(StandardCharsets.UTF_8);
             out = file.startWrite();
             out.write(bytes);
             file.finishWrite(out);
@@ -359,6 +385,15 @@ final class LauncherModel {
             if (out != null) file.failWrite(out);
             Log.e(TAG, "menu save failed", e);
         }
+    }
+
+    /** The menu as saved: the tree's structure and the hidden apps. */
+    String toJson() throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("version", 1);
+        o.put("tree", writeNodes(root.children));
+        o.put("hidden", new JSONArray(hidden));
+        return o.toString();
     }
 
     private JSONArray writeNodes(List<Node> nodes) throws Exception {

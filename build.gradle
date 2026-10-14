@@ -56,4 +56,15 @@ android {
         // targetSdk stays at Android 11, the version the Orbit devices run; this isn't a Play Store app.
         disable 'ExpiredTargetSdkVersion', 'OldTargetApi'
     }
+
+    testOptions {
+        // The model and T9 input use Android classes only in passing (a Handler, a file, the log), which then do nothing.
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    // android.jar's org.json is only stubs, and the menu's tests read and write real JSON.
+    testImplementation 'org.json:json:20260814'
 }
