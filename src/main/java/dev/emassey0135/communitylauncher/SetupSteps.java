@@ -7,7 +7,6 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.PermissionInfo;
 import android.content.pm.ResolveInfo;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.BatteryManager;
@@ -56,6 +55,12 @@ final class SetupSteps {
     static final String BACKTALK = "fyi.quin.backtalk";
     static final String BACKTALK_SERVICE = "fyi.quin.backtalk/com.google.android.marvin.talkback.TalkBackService";
     static final String BRAILLE_DISPLAY_PERMISSION = "fyi.quin.backtalk.permission.BRAILLE_DISPLAY";
+    /** Opens Backtalk's question about whether an app may be its braille display. */
+    static final String ASK_BRAILLE_DISPLAY = "fyi.quin.backtalk.action.ASK_BRAILLE_DISPLAY";
+    private static final String APPROVAL_ACTIVITY =
+            "com.google.android.accessibility.braille.brailledisplay.platform.external.ExternalDisplayApprovalActivity";
+    /** Where Backtalk keeps the apps the user allowed to be braille displays; read with root. */
+    private static final String BACKTALK_DISPLAY_PREFS = "/data/user_de/0/" + BACKTALK + "/shared_prefs/braille_display.xml";
     static final String LSPOSED_MODULE = "/data/adb/modules/zygisk_lsposed";
     static final String LSPOSED_DB = "/data/adb/lspd/config/modules_config.db";
     static final String GUARD_MODULE = "/data/adb/modules/orbit_boot_guard";
@@ -366,11 +371,11 @@ final class SetupSteps {
         File apk = fetchPayloadIfPresent(BACKTALK_APK);
         boolean downloaded = apk == null;
         if (downloaded) apk = download(BACKTALK_URL, BACKTALK_APK, "Backtalk");
-        PackageInfo info = archiveInfo(apk, PackageManager.GET_PERMISSIONS);
+        PackageInfo info = archiveInfo(apk, PackageManager.GET_ACTIVITIES);
         if (info == null || !BACKTALK.equals(info.packageName) || (downloaded && !BACKTALK_CERT.equals(signer(info)))) {
             throw new StopException("The Backtalk that setup got isn't Backtalk's own.");
         }
-        if (!definesDisplayPermission(info)) {
+        if (!hasApprovalActivity(info)) {
             throw new StopException("This version of Backtalk can't use the Orbit's keys yet, so setup can't go on.");
         }
         install(apk, "Backtalk");
@@ -400,13 +405,43 @@ final class SetupSteps {
         return Outcome.DONE;
     }
 
-    private Outcome allowDisplay() throws StopException {
-        if (pm.checkPermission(BRAILLE_DISPLAY_PERMISSION, HOOK) == PackageManager.PERMISSION_GRANTED) {
-            return Outcome.DONE;
+    /**
+     * Backtalk uses the Orbit display only once the user allows it in Backtalk, after a warning, so setup opens that
+     * question. Backtalk isn't on yet, so Orbit's screen reader reads it (the hook leaves Orbit speaking while the Orbit
+     * display isn't connected), and the user answers with the keypad.
+     */
+    @android.annotation.SuppressLint("SdCardPath") // Backtalk's own storage, read with root
+    private Outcome allowDisplay() throws Exception {
+        if (displayAllowed()) return Outcome.DONE;
+        // The permission only lets the hook ask, and Android gives it to an app installed before the app that declares
+        // it only when that app is installed again.
+        if (pm.checkPermission(BRAILLE_DISPLAY_PERMISSION, HOOK) != PackageManager.PERMISSION_GRANTED) {
+            install(new File(pm.getApplicationInfo(HOOK, 0).sourceDir), "the Orbit hook");
         }
-        rootOrStop("pm grant " + HOOK + " " + BRAILLE_DISPLAY_PERMISSION,
-                "Setup couldn't let the Orbit hook be Backtalk's braille display.");
-        return Outcome.DONE;
+        RootQuery.Result open = root("am start -a " + ASK_BRAILLE_DISPLAY + " -p " + BACKTALK
+                + " --es fyi.quin.backtalk.extra.PACKAGE " + HOOK);
+        if (!open.ok() || open.output.contains("Error")) {
+            throw new StopException("Setup couldn't ask Backtalk to use the Orbit's keys.");
+        }
+        listener.say("Backtalk is asking whether the Orbit's keys may be its braille display. Choose Allow.");
+        long until = SystemClock.uptimeMillis() + 5 * 60_000;
+        while (SystemClock.uptimeMillis() < until) {
+            SystemClock.sleep(2000);
+            if (displayAllowed()) {
+                listener.say("Backtalk can use the Orbit's keys.");
+                return Outcome.DONE;
+            }
+        }
+        throw new StopException("Backtalk wasn't allowed to use the Orbit's keys. Start setup again to be asked again.");
+    }
+
+    /** Whether the user has allowed the Orbit hook in Backtalk's list of braille display apps. */
+    private boolean displayAllowed() {
+        String prefs = root("cat " + BACKTALK_DISPLAY_PREFS + " 2>/dev/null").output;
+        int set = prefs.indexOf("<set name=\"pref_external_displays_allowed\"");
+        if (set < 0) return false;
+        int end = prefs.indexOf("</set>", set);
+        return prefs.substring(set, end < 0 ? prefs.length() : end).contains("<string>" + HOOK + "</string>");
     }
 
     /** LSPosed adds a newly installed module to its list turned off; turn it on, in Orbit's screen reader and alarm clock. */
@@ -629,13 +664,9 @@ final class SetupSteps {
         }
     }
 
+    /** Whether the installed Backtalk can use another app as a braille display, once the user allows it. */
     private boolean backtalkHasDisplayApi() {
-        try {
-            PermissionInfo info = pm.getPermissionInfo(BRAILLE_DISPLAY_PERMISSION, 0);
-            return BACKTALK.equals(info.packageName);
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
+        return pm.resolveActivity(new Intent(ASK_BRAILLE_DISPLAY).setPackage(BACKTALK), 0) != null;
     }
 
     private void install(File apk, String name) throws StopException {
@@ -744,9 +775,10 @@ final class SetupSteps {
         return sha256(info.signatures[0].toByteArray());
     }
 
-    private static boolean definesDisplayPermission(PackageInfo info) {
-        if (info.permissions == null) return false;
-        for (PermissionInfo p : info.permissions) if (BRAILLE_DISPLAY_PERMISSION.equals(p.name)) return true;
+    /** Whether a Backtalk APK can use another app as a braille display: it has the screen that asks the user. */
+    private static boolean hasApprovalActivity(PackageInfo info) {
+        if (info.activities == null) return false;
+        for (android.content.pm.ActivityInfo a : info.activities) if (APPROVAL_ACTIVITY.equals(a.name)) return true;
         return false;
     }
 
