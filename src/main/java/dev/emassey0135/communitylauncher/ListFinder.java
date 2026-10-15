@@ -4,7 +4,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
-import java.util.Collections;
 import java.util.Locale;
 
 /**
@@ -12,8 +11,8 @@ import java.util.Locale;
  *
  * <p>On the Orbit Speak, a braille letter moves to the next item starting with it. Letters typed quickly one after
  * another find the next item starting with all of them, staying put if the current item already does; if nothing
- * starts with them all, the last letter is looked for on its own, and if nothing starts with that, the error sound
- * plays.
+ * starts with them all, the last letter is looked for on its own, and if no other item starts with that, the error
+ * sound plays.
  *
  * <p>On the Orbit Player, a digit opens that item: 2 the second, 1 and 2 typed quickly the twelfth, and 0 on its own the
  * tenth, as in Orbit's launcher. Holding star turns letter navigation on or off; while it is on, letters typed with T9
@@ -108,10 +107,13 @@ final class ListFinder {
         return action == 0 && keyName.length() == 4 && keyName.startsWith("DOT") && keyName.charAt(3) <= '6';
     }
 
-    /** The first letter of a cell in the user's braille table, as Orbit's lists read it; 0 if it has none. */
+    /**
+     * The letter a cell stands for on its own; 0 if it has none. Contractions are left out, so that every letter means
+     * itself (Orbit's lists use the contracted table, where Z alone is "as").
+     */
     private char translate(int cell) {
         LiblouisClient braille = host.braille();
-        String text = braille == null ? null : braille.translateContracted(Collections.singletonList(cell), 132);
+        String text = braille == null ? null : braille.translateLetter(cell);
         return text == null || text.isEmpty() ? 0 : text.charAt(0);
     }
 
@@ -207,7 +209,9 @@ final class ListFinder {
 
     /**
      * Where typing {@code c} after {@code prefix} moves from {@code current}: staying put if the current item starts
-     * with them all, else the next item that does; else the next item starting with {@code c} alone.
+     * with them all, else the next item that does; else the next item starting with {@code c} alone. If the current item
+     * is the only one starting with {@code c}, there is nowhere to go, which is -1 as when nothing matches; but {@code c}
+     * is kept, for the letters after it.
      */
     static Found find(String[] labels, int current, String prefix, char c) {
         String letter = String.valueOf(c).toLowerCase(Locale.ROOT);
@@ -218,7 +222,8 @@ final class ListFinder {
             if (i >= 0) return new Found(i, longer);
         }
         int i = next(labels, current, letter);
-        return new Found(i, i < 0 ? "" : letter);
+        if (i < 0) return new Found(-1, "");
+        return new Found(i == current ? -1 : i, letter);
     }
 
     /** The first item after {@code current}, going round to the top, that starts with {@code prefix}; -1 if none. */

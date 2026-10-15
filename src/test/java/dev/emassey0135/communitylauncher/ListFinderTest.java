@@ -50,8 +50,17 @@ public class ListFinderTest {
         assertEquals(-1, find(3, "ed", 'z').index);
     }
 
-    @Test public void theOnlyMatchStaysCurrent() {
-        assertEquals(3, find(3, "", 'e').index);
+    @Test public void theOnlyMatchBeingCurrentIsAnError() {
+        ListFinder.Found e = find(3, "", 'e');
+        assertEquals(-1, e.index);
+        assertEquals("e", e.prefix); // still typed, for the letters after it
+        assertEquals(3, find(3, e.prefix, 'd').index);
+    }
+
+    @Test public void aLetterTypedAgainWithOnlyOneItemIsAnError() {
+        ListFinder.Found c = find(0, "", 'c');
+        assertEquals(5, c.index);
+        assertEquals(-1, find(c.index, c.prefix, 'c').index);
     }
 
     @Test public void cellsAreDotsLetGoOrPressedTogether() {

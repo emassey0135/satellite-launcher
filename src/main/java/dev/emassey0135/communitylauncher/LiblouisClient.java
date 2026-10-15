@@ -22,10 +22,13 @@ final class LiblouisClient {
     private static final String TAG = LauncherModel.TAG;
     private static final String SETTINGS = "content://com.orbit.settings.provider/preferences/";
     private static final String DEFAULT_TABLE = "en-ueb-g2.ctb";
+    private static final String DEFAULT_LETTER_TABLE = "en-ueb-g1.ctb";
 
     private final Context context;
     private volatile ILiblouisServiceInterface svc;
     private volatile String table = DEFAULT_TABLE;      // user's current table, for the committed name
+    /** The user's table that reads each cell as itself (no contractions), for finding items by letter. */
+    private volatile String letterTable = DEFAULT_LETTER_TABLE;
 
     LiblouisClient(Context context) { this.context = context.getApplicationContext(); }
 
@@ -83,7 +86,12 @@ final class LiblouisClient {
         }
         String t = values.get(key);
         if (t != null && !t.isEmpty()) table = t;
-        Log.d(TAG, "braille input table = " + table);
+        // Letters are read without contractions, so that every letter means itself: computer braille's own table when
+        // that is what the user types, else the uncontracted one.
+        String letters = values.get(key.equals("key_computer_braille_input_table")
+                ? key : "key_uncontracted_braille_input_table");
+        if (letters != null && !letters.isEmpty()) letterTable = letters;
+        Log.d(TAG, "braille input table = " + table + ", for letters " + letterTable);
     }
 
     /** Parse the output of the marked multi-query: each {@code @@key} line is followed by that key's row. */
@@ -103,6 +111,15 @@ final class LiblouisClient {
 
     /** Translate a list of cell masks in the user's current table at the given liblouis mode (388 live, 132 commit). */
     String translateContracted(java.util.List<Integer> cells, int mode) {
+        return translate(cells, mode, table);
+    }
+
+    /** The letter one cell stands for on its own, without contractions; null if it isn't known. */
+    String translateLetter(int cell) {
+        return translate(java.util.Collections.singletonList(cell), 132, letterTable);
+    }
+
+    private String translate(java.util.List<Integer> cells, int mode, String table) {
         ILiblouisServiceInterface s = svc;
         if (s == null || cells.isEmpty()) return cells.isEmpty() ? "" : null;
         StringBuilder sb = new StringBuilder(cells.size());
