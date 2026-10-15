@@ -10,7 +10,7 @@ import java.util.ArrayDeque;
 /**
  * The power options ({@link PowerMenu}), shown as a dialog over whatever app is in front when the hardware power button
  * is pressed. The power button receiver in {@link CommunityLauncherApp} launches it in place of Orbit's own power
- * dialog. Its keys are the launcher's ({@link MenuKeys}); going back from the first list, or cancelling, closes it. It
+ * dialog. Its keys are the launcher's ({@link MenuKeys}, {@link ListFinder}); going back from the first list, or cancelling, closes it. It
  * opens in a task of its own (an empty task affinity in the manifest), so that closing it returns to the app it opened
  * over; in the launcher's task it would bring the home screen forward.
  *
@@ -25,6 +25,13 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ArrayDeque<Frame> stack = new ArrayDeque<>();
     private ScreenReaderClient sr;
+    private LiblouisClient braille;
+    private final ListFinder finder = new ListFinder(new ListFinder.Host() {
+        @Override public Frame frame() { return stack.peek(); }
+        @Override public void moved() { stack.peek().announce(sr); }
+        @Override public ScreenReaderClient screenReader() { return sr; }
+        @Override public LiblouisClient braille() { return braille; }
+    });
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -32,6 +39,8 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
         stack.push(PowerMenu.frame(this));
         sr = new ScreenReaderClient(this, this, KEYPAD_NAME);
         sr.bind();
+        braille = new LiblouisClient(this);
+        braille.bind();
     }
 
     @Override public void onReady() {
@@ -44,8 +53,10 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
 
     @Override public void onKey(String keyName, int action, boolean longPress) {
         main.post(() -> {
+            if (finder.key(keyName, action, longPress)) return;
             Frame frame = stack.peek();
             MenuKeys.Command command = MenuKeys.of(keyName, action, longPress);
+            if (command != MenuKeys.Command.NONE) finder.reset();
             if (frame.navigate(command)) {
                 frame.announce(sr);
                 return;
@@ -76,7 +87,9 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
     @Override public ScreenReaderClient screenReader() { return sr; }
 
     @Override protected void onDestroy() {
+        finder.reset();
         if (sr != null) sr.unbind();
+        if (braille != null) braille.unbind();
         super.onDestroy();
     }
 }

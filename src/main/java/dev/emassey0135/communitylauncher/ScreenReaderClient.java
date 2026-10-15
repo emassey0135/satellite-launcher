@@ -24,6 +24,8 @@ import com.orbit.screenreader.IUARTKeypadCallback;
  */
 final class ScreenReaderClient {
     static final String TAG = LauncherModel.TAG;
+    /** The screen reader's sounds for {@link #playSound}. */
+    static final int SOUND_ERROR = 1, SOUND_COMMIT = 9;
 
     interface Listener {
         void onReady();

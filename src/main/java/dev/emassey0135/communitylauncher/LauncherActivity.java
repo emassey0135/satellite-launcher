@@ -36,8 +36,8 @@ import java.util.zip.ZipFile;
 /**
  * The home screen. A stack of {@link Frame}s drives navigation; the top frame handles keys. Browse frames show a
  * folder's visible contents (Plus gating applied); action frames show a flat list of operations (context menus,
- * move targets, hidden-app lists). The keys are {@link MenuKeys}'; HOME on the Orbit Player goes to the top (see
- * {@link #onNewIntent}).
+ * move targets, hidden-app lists). The keys are {@link MenuKeys}, and typing finds items ({@link ListFinder}); HOME on
+ * the Orbit Player goes to the top (see {@link #onNewIntent}).
  */
 public class LauncherActivity extends Activity implements ScreenReaderClient.Listener {
 
@@ -50,6 +50,12 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     private TextView view;
     private boolean started;
     private boolean inFront; // between onResume and onStop: HOME pressed now means "go to the top"
+    private final ListFinder finder = new ListFinder(new ListFinder.Host() {
+        @Override public Frame frame() { return LauncherActivity.this.frame(); }
+        @Override public void moved() { render(true); }
+        @Override public ScreenReaderClient screenReader() { return sr; }
+        @Override public LiblouisClient braille() { return braille; }
+    });
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -96,6 +102,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     @Override protected void onStop() {
         inFront = false;
+        finder.reset();
         super.onStop();
     }
 
@@ -144,7 +151,9 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         // The first key from a phone keypad (the Orbit Player, which has no Plus tier) shows the Plus apps.
         if (model.setPhoneKeypad(sr.isPhoneKeypad())) render(false);
         if (frame() instanceof TextEntryFrame) { ((TextEntryFrame) frame()).key(keyName, action, longPress); return; }
+        if (finder.key(keyName, action, longPress)) return;
         MenuKeys.Command command = MenuKeys.of(keyName, action, longPress);
+        if (command != MenuKeys.Command.NONE) finder.reset();
         if (frame().navigate(command)) { render(true); return; }
         switch (command) {
             case BACK: back(); break;
@@ -189,9 +198,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         if (select != null && frame() instanceof BrowseFrame) ((BrowseFrame) frame()).selectNode(select);
         render(true);
     }
-
-    // Screen reader sounds used by the phone keypad text field.
-    private static final int SOUND_ERROR = 1, SOUND_COMMIT = 9;
 
     private void render(boolean speak) {
         if (!model.isLoaded()) { view.setText("Loading"); return; } // announced once loaded
@@ -810,11 +816,11 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         /** Left speaks the character the caret moved onto; Right the one it moved past. An edge sounds the error tone. */
         private void phoneCharMove(int dir) {
             if (dir < 0) {
-                if (cursor <= 0) { sr.playSound(SOUND_ERROR); report("boundary_start", cursor); return; }
+                if (cursor <= 0) { sr.playSound(ScreenReaderClient.SOUND_ERROR); report("boundary_start", cursor); return; }
                 cursor--;
                 report("cursor_moved", cursor);
             } else {
-                if (cursor >= text.length()) { sr.playSound(SOUND_ERROR); report("boundary_end", cursor - 1); return; }
+                if (cursor >= text.length()) { sr.playSound(ScreenReaderClient.SOUND_ERROR); report("boundary_end", cursor - 1); return; }
                 cursor++;
                 report("cursor_moved", cursor - 1);
             }
@@ -823,12 +829,12 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         /** Up and Down in a one-line field jump to its start or end. */
         private void phoneEdge(int dir) {
             cursor = dir < 0 ? 0 : text.length();
-            sr.playSound(SOUND_ERROR);
+            sr.playSound(ScreenReaderClient.SOUND_ERROR);
             report(dir < 0 ? "boundary_start" : "boundary_end", cursor);
         }
 
         private void phoneBackspace() {
-            if (cursor <= 0 || text.length() == 0) { sr.playSound(SOUND_ERROR); return; }
+            if (cursor <= 0 || text.length() == 0) { sr.playSound(ScreenReaderClient.SOUND_ERROR); return; }
             text.deleteCharAt(cursor - 1);
             cursor--;
             report("character_deleted", cursor);
@@ -850,7 +856,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
                 insertAt(position, c);
                 if (!feedback) return;
                 int mode = sr.characterCommitFeedback();
-                if (mode == 1 || mode == 4) sr.playSound(SOUND_COMMIT);
+                if (mode == 1 || mode == 4) sr.playSound(ScreenReaderClient.SOUND_COMMIT);
                 if (mode == 3 || mode == 5) sr.vibrate(50);
                 if (mode == 2 || mode == 4 || mode == 5) sr.speakQueued(String.valueOf(c));
             }
