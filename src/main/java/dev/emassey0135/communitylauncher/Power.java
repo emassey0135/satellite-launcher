@@ -24,6 +24,9 @@ final class Power {
 
     /** Restarts the device, or shuts it down; returns false if root wouldn't do it. Call off the main thread. */
     static boolean go(ScreenReaderClient sr, boolean restart) {
+        // Without root, Android can't be asked, so the microcontroller isn't told either: it would stop the keys for a
+        // restart that doesn't happen.
+        if (!RootQuery.exec("id").ok()) return false;
         if (sr != null && sr.isReady()) {
             sr.sendData(COMMAND, new byte[] {restart ? RESTART : SHUT_DOWN});
             SystemClock.sleep(SETTLE_MS);
@@ -32,12 +35,19 @@ final class Power {
     }
 
     /**
-     * {@link #go} on a thread of its own, from the main thread. Once the device is going down, choosing again does
-     * nothing.
+     * {@link #go} on a thread of its own, from the main thread, saying so if it fails. Once the device is going down,
+     * choosing again does nothing.
      */
     static void goInBackground(ScreenReaderClient sr, boolean restart) {
         if (!going.compareAndSet(false, true)) return;
-        new Thread(() -> { if (!go(sr, restart)) going.set(false); }, "power").start();
+        new Thread(() -> {
+            if (go(sr, restart)) return;
+            going.set(false);
+            if (sr != null) {
+                sr.speak("The device couldn't " + (restart ? "restart" : "shut down")
+                        + ", because the launcher doesn't have root access.");
+            }
+        }, "power").start();
     }
 
     private static final AtomicBoolean going = new AtomicBoolean();
