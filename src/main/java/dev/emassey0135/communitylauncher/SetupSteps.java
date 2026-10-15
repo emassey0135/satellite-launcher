@@ -128,6 +128,7 @@ final class SetupSteps {
                 step("keep a home app until setup finishes", this::keepHome),
                 step("back up what setup changes", this::backUp),
                 step("repair Magisk", this::repairMagisk),
+                step("set the device's language", this::setLocale),
                 SetupEngine.RESTART,
                 step("install the boot guard", this::installBootGuard),
                 step("turn on Zygisk", this::enableZygisk),
@@ -205,7 +206,9 @@ final class SetupSteps {
                 Settings.Secure.ACCESSIBILITY_ENABLED}) {
             backup.secure.put(name, Settings.Secure.getString(context.getContentResolver(), name));
         }
-        for (String name : new String[] {Settings.System.ACCELEROMETER_ROTATION, Settings.System.USER_ROTATION}) {
+        backup.locale = root("getprop persist.sys.locale").output.trim();
+        for (String name : new String[] {Settings.System.ACCELEROMETER_ROTATION, Settings.System.USER_ROTATION,
+                "system_locales"}) {
             backup.system.put(name, Settings.System.getString(context.getContentResolver(), name));
         }
         ComponentName home = currentHome();
@@ -600,6 +603,26 @@ final class SetupSteps {
         root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
         listener.say("Made this launcher the home app.");
         return Outcome.DONE;
+    }
+
+    /**
+     * Sets the device's language, but only if the computer asked for one: the devices come set to English (India), and
+     * which English, or other language, is right depends on the user. It takes effect at the next start.
+     */
+    private Outcome setLocale() throws StopException {
+        String locale = options.getString(SetupService.EXTRA_LOCALE, null);
+        if (locale == null || locale.isEmpty()) return Outcome.DONE;
+        if (!isLanguageTag(locale)) throw new StopException("The language setup was given, " + locale + ", isn't one.");
+        if (locale.equals(root("getprop persist.sys.locale").output.trim())) return Outcome.DONE;
+        rootOrStop("setprop persist.sys.locale " + locale + " && settings put system system_locales " + locale,
+                "Setup couldn't set the device's language.");
+        listener.say("Set the device's language.");
+        return Outcome.NEEDS_RESTART;
+    }
+
+    /** Whether {@code tag} is a language tag such as en or en-GB, and so safe to put in a command. */
+    static boolean isLanguageTag(String tag) {
+        return tag.matches("[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*");
     }
 
     /** Finish at home, wherever setup left the user (such as Backtalk's script settings after it asked). */

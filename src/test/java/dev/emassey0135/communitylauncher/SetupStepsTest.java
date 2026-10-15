@@ -113,6 +113,24 @@ public class SetupStepsTest {
         assertTrue(script.contains("DELETE FROM settings WHERE key='zygisk'")); // it wasn't set
     }
 
+    @Test public void acceptsOnlyLanguageTags() {
+        assertTrue(SetupSteps.isLanguageTag("en"));
+        assertTrue(SetupSteps.isLanguageTag("en-GB"));
+        assertTrue(SetupSteps.isLanguageTag("zh-Hant-TW"));
+        assertFalse(SetupSteps.isLanguageTag(""));
+        assertFalse(SetupSteps.isLanguageTag("en-GB; reboot"));
+        assertFalse(SetupSteps.isLanguageTag("en_GB"));
+    }
+
+    @Test public void restoreScriptPutsTheLanguageBack() {
+        SetupBackup b = new SetupBackup();
+        b.locale = "en-IN";
+        b.system.put("system_locales", "en-IN");
+        String script = b.restoreScript("now");
+        assertTrue(script.contains("setprop persist.sys.locale en-IN\n"));
+        assertTrue(script.contains("settings put system system_locales 'en-IN'\n"));
+    }
+
     @Test public void quotesForTheShell() {
         assertEquals("'it'\\''s'", SetupBackup.quote("it's"));
     }

@@ -18,6 +18,8 @@ final class SetupBackup {
     final Map<String, Integer> enabledStates = new LinkedHashMap<>();
     /** Magisk's zygisk setting, or null where it wasn't set. */
     String zygisk;
+    /** The device's language (persist.sys.locale), or empty where it wasn't set. */
+    String locale = "";
     boolean lsposedInstalled;
     /** Whether LSPosed's module list was saved next to the script, and with it the log of its latest changes. */
     boolean lsposedConfigSaved;
@@ -39,6 +41,7 @@ final class SetupBackup {
                 .append(") and restart the device.\n\n");
         for (Map.Entry<String, String> e : secure.entrySet()) setting(s, "secure", e.getKey(), e.getValue());
         for (Map.Entry<String, String> e : system.entrySet()) setting(s, "system", e.getKey(), e.getValue());
+        if (SetupSteps.isLanguageTag(locale)) s.append("setprop persist.sys.locale ").append(locale).append('\n');
         if (home != null) s.append("cmd package set-home-activity ").append(quote(home)).append('\n');
         for (Map.Entry<String, Integer> e : enabledStates.entrySet()) {
             s.append(enabledCommand(e.getValue())).append(' ').append(quote(e.getKey())).append('\n');

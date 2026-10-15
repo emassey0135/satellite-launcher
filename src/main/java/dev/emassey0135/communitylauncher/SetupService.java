@@ -30,8 +30,9 @@ import java.util.Locale;
  *
  * <p>The computer's choices, each on unless a start says otherwise and kept for later runs (including after setup's
  * restarts) until another start changes it: {@code --ez google_play false} leaves Google Play as it is rather than
- * turning it on where it was turned off, and {@code --ez turn_off_dnd false} leaves Do Not Disturb as it is on the first
- * run rather than turning it off.
+ * turning it on where it was turned off, {@code --ez turn_off_dnd false} leaves Do Not Disturb as it is on the first
+ * run rather than turning it off, and {@code --es locale en-GB} sets the device's language, which is otherwise left
+ * alone.
  */
 public final class SetupService extends Service {
     private static final String TAG = LauncherModel.TAG;
@@ -43,6 +44,8 @@ public final class SetupService extends Service {
     static final String EXTRA_GOOGLE_PLAY = "google_play";
     /** Whether the first run turns off Do Not Disturb (default true). */
     static final String EXTRA_TURN_OFF_DND = "turn_off_dnd";
+    /** The device's language as a language tag, such as en-GB; left alone unless given. */
+    static final String EXTRA_LOCALE = "locale";
     private static final String CHANNEL = "setup";
 
     private ScreenReaderClient sr;
@@ -59,6 +62,9 @@ public final class SetupService extends Service {
             if (intent != null && intent.hasExtra(option)) {
                 options.edit().putBoolean(option, intent.getBooleanExtra(option, true)).commit();
             }
+        }
+        if (intent != null && intent.hasExtra(EXTRA_LOCALE)) {
+            options.edit().putString(EXTRA_LOCALE, intent.getStringExtra(EXTRA_LOCALE)).commit();
         }
         sr = new ScreenReaderClient(this, new ScreenReaderClient.Listener() {
             @Override public void onReady() { if (sr.isScreenReaderReady()) speakUnspoken(); }
