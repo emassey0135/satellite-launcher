@@ -446,30 +446,88 @@ final class SetupSteps {
         if (pm.checkPermission(BRAILLE_DISPLAY_PERMISSION, HOOK) != PackageManager.PERMISSION_GRANTED) {
             install(new File(pm.getApplicationInfo(HOOK, 0).sourceDir), "the Satellite hook");
         }
-        RootQuery.Result open = root("am start -a " + ASK_BRAILLE_DISPLAY + " -p " + BACKTALK
-                + " --es fyi.quin.backtalk.extra.PACKAGE " + HOOK);
-        if (!open.ok() || open.output.contains("Error")) {
-            throw new StopException("Setup couldn't ask Backtalk to use the Orbit's keys.");
+        boolean allowed = askInBacktalk("am start -a " + ASK_BRAILLE_DISPLAY + " -p " + BACKTALK
+                        + " --es fyi.quin.backtalk.extra.PACKAGE " + HOOK,
+                "Backtalk is asking whether the Orbit's keys may be its braille display. Choose Allow.",
+                this::displayAllowed, () -> inDisplaySet("pref_external_displays_denied"),
+                "Setup couldn't ask Backtalk to use the Orbit's keys.");
+        if (!allowed) {
+            throw new StopException("Backtalk wasn't allowed to use the Orbit's keys. Start setup again to be asked again.");
         }
-        listener.say("Backtalk is asking whether the Orbit's keys may be its braille display. Choose Allow.");
-        long until = SystemClock.uptimeMillis() + 5 * 60_000;
-        while (SystemClock.uptimeMillis() < until) {
-            SystemClock.sleep(2000);
-            if (displayAllowed()) {
-                listener.say("Backtalk can use the Orbit's keys.");
-                return Outcome.DONE;
-            }
-        }
-        throw new StopException("Backtalk wasn't allowed to use the Orbit's keys. Start setup again to be asked again.");
+        listener.say("Backtalk can use the Orbit's keys.");
+        return Outcome.DONE;
     }
 
     /** Whether the user has allowed the Satellite hook in Backtalk's list of braille display apps. */
     private boolean displayAllowed() {
+        return inDisplaySet("pref_external_displays_allowed");
+    }
+
+    /** Whether the Satellite hook is in one of Backtalk's sets of braille display apps: allowed, or not allowed. */
+    private boolean inDisplaySet(String name) {
         String prefs = root("cat " + BACKTALK_DISPLAY_PREFS + " 2>/dev/null").output;
-        int set = prefs.indexOf("<set name=\"pref_external_displays_allowed\"");
+        int set = prefs.indexOf("<set name=\"" + name + "\"");
         if (set < 0) return false;
         int end = prefs.indexOf("</set>", set);
         return prefs.substring(set, end < 0 ? prefs.length() : end).contains("<string>" + HOOK + "</string>");
+    }
+
+    /** Something setup checks about the device. */
+    private interface Check {
+        boolean test();
+    }
+
+    /** How long the device must have been running before setup asks the user anything. */
+    private static final long SETTLED_MS = 2 * 60_000;
+
+    /**
+     * Opens a question in Backtalk with {@code command}, says {@code question}, and waits up to 5 minutes for the user to
+     * answer it ({@code answered}); false if they don't, or turn it down ({@code refused}).
+     *
+     * <p>The device must have been running for 2 minutes first: until then, the apps starting with it can keep the
+     * processor so busy that Android reports Backtalk as not responding while it asks. If the question goes away
+     * without an answer, such as when the user chooses Close then, it is asked once more.
+     */
+    private boolean askInBacktalk(String command, String question, Check answered, Check refused, String cantOpen)
+            throws StopException {
+        long up = SystemClock.elapsedRealtime();
+        if (up < SETTLED_MS) {
+            listener.say("Waiting a moment for the device to finish starting.");
+            SystemClock.sleep(SETTLED_MS - up);
+        }
+        for (int asked = 0; asked < 2; asked++) {
+            RootQuery.Result open = root(command);
+            if (!open.ok() || open.output.contains("Error")) throw new StopException(cantOpen);
+            listener.say(asked == 0 ? question : "Backtalk's question closed without an answer, so here it is again. "
+                    + question);
+            long until = SystemClock.uptimeMillis() + 5 * 60_000;
+            boolean seen = false;
+            while (SystemClock.uptimeMillis() < until) {
+                SystemClock.sleep(2000);
+                if (answered.test()) return true;
+                if (refused.test()) return false;
+                boolean showing = backtalkShowing();
+                if (showing) {
+                    seen = true;
+                } else if (seen) {
+                    // Gone: answered just now (Backtalk records it a moment later), or closed without an answer.
+                    SystemClock.sleep(2000);
+                    if (answered.test()) return true;
+                    break;
+                }
+            }
+            if (SystemClock.uptimeMillis() >= until) return false;
+        }
+        return false;
+    }
+
+    /**
+     * Whether one of Backtalk's screens is in front, such as one asking the user something. Android's not responding
+     * warning shows over it without taking its place.
+     */
+    private boolean backtalkShowing() {
+        return root("dumpsys activity activities | grep -q 'ResumedActivity.* " + BACKTALK + "/' && echo yes")
+                .output.contains("yes");
     }
 
     /** LSPosed adds a newly installed module to its list turned off; turn it on, in the Orbit apps it fixes. */
@@ -600,20 +658,15 @@ final class SetupSteps {
     private Outcome installScript() throws Exception {
         String wanted = sha256(readAsset(SCRIPT));
         String installedPath = "/data/data/" + BACKTALK + "/files/scripts/orbit-step-aside/main.js";
-        if (root("sha256sum " + installedPath).output.startsWith(wanted)) return Outcome.DONE;
-        RootQuery.Result open = root("am start -a android.intent.action.VIEW -t application/javascript -d " + SCRIPT_URI
-                + " -p " + BACKTALK);
-        if (!open.ok() || open.output.contains("Error")) {
-            throw new StopException("Setup couldn't open the step aside script with Backtalk.");
-        }
-        listener.say("Backtalk is asking to install the Orbit step aside script, which keeps it quiet in Orbit's apps. "
-                + "Choose Install.");
-        long until = SystemClock.uptimeMillis() + 5 * 60_000;
-        while (SystemClock.uptimeMillis() < until) {
-            SystemClock.sleep(2000);
-            if (root("sha256sum " + installedPath).output.startsWith(wanted)) return Outcome.DONE;
-        }
-        throw new StopException("The step aside script wasn't installed. Start setup again to be asked again.");
+        Check installed = () -> root("sha256sum " + installedPath).output.startsWith(wanted);
+        if (installed.test()) return Outcome.DONE;
+        boolean done = askInBacktalk("am start -a android.intent.action.VIEW -t application/javascript -d " + SCRIPT_URI
+                        + " -p " + BACKTALK,
+                "Backtalk is asking to install the Orbit step aside script, which keeps it quiet in Orbit's apps. "
+                        + "Choose Install.",
+                installed, () -> false, "Setup couldn't open the step aside script with Backtalk.");
+        if (!done) throw new StopException("The step aside script wasn't installed. Start setup again to be asked again.");
+        return Outcome.DONE;
     }
 
     private Outcome makeHome() throws StopException {
