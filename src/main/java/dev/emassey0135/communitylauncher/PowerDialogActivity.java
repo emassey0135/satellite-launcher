@@ -78,13 +78,11 @@ public final class PowerDialogActivity extends Activity implements ScreenReaderC
         }
     }
 
-    /** Mirror Orbit: announce, tell the keypad MCU, then ask the system to shut down or reboot (root). */
     private void power(boolean restart) {
         if (acted) return;
         acted = true;
         sr.speak(restart ? "Restarting" : "Shutting down");
-        sr.sendData((byte) 8, new byte[]{ (byte) (restart ? 4 : 3) });
-        new Thread(() -> RootQuery.run(restart ? "svc power reboot" : "svc power shutdown"), "power").start();
+        Power.goInBackground(sr, restart);
     }
 
     @Override protected void onDestroy() {

@@ -462,11 +462,9 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         push(new ActionFrame(prompt + "?", actions));
     }
 
-    /** Mirror Orbit: tell the keypad MCU, announce, then ask the system to shut down or reboot (root). */
     private void power(boolean restart) {
         sr.speak(restart ? "Restarting" : "Shutting down");
-        sr.sendData((byte) 8, new byte[]{ (byte) (restart ? 4 : 3) });
-        new Thread(() -> RootQuery.run(restart ? "svc power reboot" : "svc power shutdown"), "power").start();
+        Power.goInBackground(sr, restart);
     }
 
     private void refreshLicense(boolean announce) {

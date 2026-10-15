@@ -71,7 +71,7 @@ public final class SetupService extends Service {
                     new SetupEngine.Device() {
                         @Override public String bootId() { return bootIdOf(); }
                         @Override public void restart() throws Exception {
-                            if (!RootQuery.exec("svc power reboot").ok()) throw new Exception("svc power reboot failed");
+                            if (!Power.go(sr, true)) throw new Exception("svc power reboot failed");
                         }
                     }, listener);
             listener.say(started ? "Setting up the device." : "Continuing setup.");
