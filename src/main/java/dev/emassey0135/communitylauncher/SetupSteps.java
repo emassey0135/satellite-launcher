@@ -491,8 +491,7 @@ final class SetupSteps {
             }
             if (attempt == 0) {
                 listener.log("the hook hasn't reported; restarting Orbit's screen reader");
-                root("kill $(pidof com.orbit.screenreader)");
-                SystemClock.sleep(5000);
+                restartScreenReader();
             }
         }
         throw new StopException("The Orbit hook isn't working in Orbit's screen reader, so Backtalk won't be turned on.");
@@ -524,6 +523,19 @@ final class SetupSteps {
             }
         }
         return status;
+    }
+
+    /**
+     * Restarts Orbit's screen reader, so that it loads the hook again. Stopping it in the middle of speaking can leave the
+     * speech engine failing every request (AccessMind's Vocalizer reports native error 16003), and then nothing speaks,
+     * so the engine is restarted too; Android starts it again for whoever uses it next.
+     */
+    private void restartScreenReader() {
+        root("kill $(pidof com.orbit.screenreader)");
+        SystemClock.sleep(2000);
+        String engine = Settings.Secure.getString(context.getContentResolver(), "tts_default_synth");
+        if (engine != null && !engine.isEmpty()) root("kill $(pidof " + engine + ") 2>/dev/null");
+        SystemClock.sleep(3000);
     }
 
     private Outcome enableBacktalk() throws StopException {
