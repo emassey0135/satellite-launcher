@@ -15,8 +15,12 @@ final class RootQuery {
     /** The {@code value=} field of a single-row content query, or null if root or the row is unavailable. */
     static String contentValue(String uri) {
         String out = run("content query --uri " + uri);
-        if (out == null) return null;
-        int i = out.indexOf("value=");
+        return out == null ? null : valueField(out, 0);
+    }
+
+    /** The {@code value=} field of the first row in {@code out} from {@code from} on, or null if there is none. */
+    static String valueField(String out, int from) {
+        int i = out.indexOf("value=", from);
         if (i < 0) return null;
         int end = out.indexOf(", type=", i);
         if (end < 0) end = out.indexOf('\n', i);

@@ -1,5 +1,9 @@
 package dev.emassey0135.communitylauncher;
 
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.SystemClock;
 
 /**
@@ -28,5 +32,24 @@ final class Power {
     /** {@link #go} on a thread of its own, from the main thread. */
     static void goInBackground(ScreenReaderClient sr, boolean restart) {
         new Thread(() -> go(sr, restart), "power").start();
+    }
+
+    /** Android's battery level in percent, or -1 if it doesn't know it. */
+    static int batteryPercent(Context context) {
+        Intent status = batteryStatus(context);
+        if (status == null) return -1;
+        int level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        return level >= 0 && scale > 0 ? Math.round(level * 100f / scale) : -1;
+    }
+
+    /** Whether the charger is connected. */
+    static boolean isCharging(Context context) {
+        Intent status = batteryStatus(context);
+        return status != null && status.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+    }
+
+    private static Intent batteryStatus(Context context) {
+        return context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
     }
 }

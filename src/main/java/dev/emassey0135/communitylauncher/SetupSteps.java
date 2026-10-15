@@ -3,13 +3,11 @@ package dev.emassey0135.communitylauncher;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.sqlite.SQLiteDatabase;
-import android.os.BatteryManager;
 import android.os.Build;
 import android.os.SystemClock;
 import android.provider.Settings;
@@ -66,6 +64,8 @@ final class SetupSteps {
     static final String GUARD_MODULE = "/data/adb/modules/orbit_boot_guard";
     static final String SCRIPT = "orbit-step-aside.js";
     static final String SCRIPT_URI = "content://" + LAUNCHER + ".scripts/" + SCRIPT;
+    /** Goes to the home screen, through root, as an app in the background can't. */
+    static final String GO_HOME = "am start -a android.intent.action.MAIN -c android.intent.category.HOME";
 
     /** LSPosed 1.9.2 (7024) for Zygisk, the version tested on both devices. */
     private static final String LSPOSED_ZIP = "lsposed.zip";
@@ -173,15 +173,10 @@ final class SetupSteps {
         if (!root("id").output.contains("uid=0")) {
             throw new StopException("Setup needs root access, which this device doesn't give it.");
         }
-        Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        if (battery != null) {
-            int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, 0);
-            int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
-            boolean charging = battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
-            if (!charging && level * 100 < scale * 50) {
-                throw new StopException("Setup restarts the device several times. Charge the battery to at least half, "
-                        + "or connect the charger, and start setup again.");
-            }
+        int battery = Power.batteryPercent(context);
+        if (battery >= 0 && battery < 50 && !Power.isCharging(context)) {
+            throw new StopException("Setup restarts the device several times. Charge the battery to at least half, "
+                    + "or connect the charger, and start setup again.");
         }
         return Outcome.DONE;
     }
@@ -220,21 +215,11 @@ final class SetupSteps {
                 // Not in this version of Orbit's launcher.
             }
         }
-        try {
-            backup.enabledStates.put(DeviceSetup.AUTOMATION_PACKAGE,
-                    pm.getApplicationEnabledSetting(DeviceSetup.AUTOMATION_PACKAGE));
-        } catch (IllegalArgumentException e) {
-            // Not installed.
+        for (String pkg : concat(new String[] {DeviceSetup.AUTOMATION_PACKAGE}, GOOGLE_PLAY)) {
+            Integer state = DeviceSetup.enabledState(pm, pkg);
+            if (state != null) backup.enabledStates.put(pkg, state);
         }
-        for (String pkg : GOOGLE_PLAY) {
-            try {
-                backup.enabledStates.put(pkg, pm.getApplicationEnabledSetting(pkg));
-            } catch (IllegalArgumentException e) {
-                // Not installed.
-            }
-        }
-        backup.zygisk = sqliteValue(root("magisk --sqlite \"SELECT value FROM settings WHERE key='zygisk'\"").output,
-                "value");
+        backup.zygisk = zygiskSetting();
         backup.lsposedInstalled = root("[ -d " + LSPOSED_MODULE + " ]").ok();
         backup.hookInstalled = installed(HOOK) != null;
         backup.backtalkInstalled = installed(BACKTALK) != null;
@@ -324,9 +309,7 @@ final class SetupSteps {
     }
 
     private Outcome enableZygisk() throws Exception {
-        String value = sqliteValue(root("magisk --sqlite \"SELECT value FROM settings WHERE key='zygisk'\"").output,
-                "value");
-        if ("1".equals(value)) return Outcome.DONE;
+        if ("1".equals(zygiskSetting())) return Outcome.DONE;
         rootOrStop("magisk --sqlite \"REPLACE INTO settings (key,value) VALUES('zygisk',1)\"",
                 "Setup couldn't turn on Zygisk in Magisk.");
         listener.say("Turned on Zygisk.");
@@ -455,7 +438,7 @@ final class SetupSteps {
         // LSPosed adds the module itself soon after it is installed; give it the chance, so the two don't race.
         for (int i = 0; i < 5; i++) {
             if (withConfigCopy(db -> LsposedConfig.isEnabled(db, HOOK, HOOK_SCOPE))) return Outcome.DONE;
-            if (withConfigCopy(db -> moduleListed(db))) break;
+            if (withConfigCopy(db -> LsposedConfig.isListed(db, HOOK))) break;
             SystemClock.sleep(2000);
         }
         File db = copyConfig();
@@ -544,10 +527,8 @@ final class SetupSteps {
         String services = Settings.Secure.getString(context.getContentResolver(),
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         boolean on = Settings.Secure.getInt(context.getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1;
-        if (services != null && on) {
-            for (String s : services.split(":")) if (s.equalsIgnoreCase(BACKTALK_SERVICE)) return Outcome.DONE;
-        }
-        String list = services == null || services.isEmpty() ? BACKTALK_SERVICE : services + ":" + BACKTALK_SERVICE;
+        String list = DeviceSetup.withServices(services, BACKTALK_SERVICE);
+        if (on && list.equals(services)) return Outcome.DONE;
         rootOrStop("settings put secure enabled_accessibility_services " + SetupBackup.quote(list)
                 + " && settings put secure accessibility_enabled 1", "Setup couldn't turn Backtalk on.");
         listener.say("Turned Backtalk on.");
@@ -599,7 +580,7 @@ final class SetupSteps {
                 "Setup couldn't make this launcher the home app.");
         // Orbit's launcher turns Do Not Disturb back on whenever it opens; stop it so it doesn't open again.
         root("am force-stop com.orbit.homelauncher");
-        root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+        root(GO_HOME);
         listener.say("Made this launcher the home app.");
         return Outcome.DONE;
     }
@@ -632,14 +613,8 @@ final class SetupSteps {
         if (!options.getBoolean(SetupService.EXTRA_GOOGLE_PLAY, true)) return Outcome.DONE;
         StringBuilder enable = new StringBuilder();
         for (String pkg : GOOGLE_PLAY) {
-            int state;
-            try {
-                state = pm.getApplicationEnabledSetting(pkg);
-            } catch (IllegalArgumentException e) {
-                continue; // not on this device
-            }
-            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                    || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+            Integer state = DeviceSetup.enabledState(pm, pkg);
+            if (state != null && DeviceSetup.isDisabled(state)) {
                 if (enable.length() > 0) enable.append(" && ");
                 enable.append("pm enable ").append(pkg);
             }
@@ -671,6 +646,17 @@ final class SetupSteps {
     }
 
     // ---- Helpers ---------------------------------------------------------------------------------------------------
+
+    /** Magisk's zygisk setting, or null if it isn't set. */
+    private String zygiskSetting() {
+        return sqliteValue(root("magisk --sqlite \"SELECT value FROM settings WHERE key='zygisk'\"").output, "value");
+    }
+
+    private static String[] concat(String[] a, String[] b) {
+        String[] all = Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, all, a.length, b.length);
+        return all;
+    }
 
     private RootQuery.Result root(String command) {
         RootQuery.Result r = RootQuery.exec(true, command);
@@ -747,13 +733,6 @@ final class SetupSteps {
         }
     }
 
-    private static boolean moduleListed(SQLiteDatabase db) {
-        try (android.database.Cursor c = db.rawQuery("SELECT 1 FROM modules WHERE module_pkg_name=?",
-                new String[] {HOOK})) {
-            return c.moveToFirst();
-        }
-    }
-
     /** A copy of LSPosed's list in this app's storage, with its log of recent changes. */
     private File copyConfig() throws Exception {
         File db = new File(cacheDir(), "modules_config.db");
@@ -780,9 +759,7 @@ final class SetupSteps {
             if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
             long length = c.getContentLengthLong();
             try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(f)) {
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                Streams.copy(in, out);
             }
             if (length >= 0 && f.length() != length) throw new Exception("got " + f.length() + " of " + length + " bytes");
             return f;
@@ -841,26 +818,15 @@ final class SetupSteps {
 
     private byte[] readAsset(String name) throws Exception {
         try (InputStream in = context.getAssets().open(name)) {
-            return readAll(in);
+            return Streams.readAll(in);
         }
-    }
-
-    /** All of {@code in} (InputStream.readAllBytes is Android 13 and later). */
-    private static byte[] readAll(InputStream in) throws Exception {
-        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[65536];
-        int n;
-        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-        return out.toByteArray();
     }
 
     private static void copyEntry(ZipFile zip, String name, File to) throws Exception {
         ZipEntry e = zip.getEntry(name);
         if (e == null) throw new StopException("The Magisk app doesn't have " + name + " to repair Magisk with.");
         try (InputStream in = zip.getInputStream(e); OutputStream out = new FileOutputStream(to)) {
-            byte[] buf = new byte[65536];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            Streams.copy(in, out);
         }
     }
 
@@ -872,7 +838,7 @@ final class SetupSteps {
 
     static String sha256(File f) throws Exception {
         try (InputStream in = new java.io.FileInputStream(f)) {
-            return sha256(readAll(in));
+            return sha256(Streams.readAll(in));
         }
     }
 

@@ -150,91 +150,87 @@ final class ScreenReaderClient {
         }
     }
 
-    void speak(String text) {
+    /** One call to Orbit's screen reader. */
+    private interface Call {
+        void run(IScreenReaderService s) throws RemoteException;
+    }
+
+    /** One question to Orbit's screen reader. */
+    private interface Query<T> {
+        T run(IScreenReaderService s) throws RemoteException;
+    }
+
+    /** Makes {@code call} if the screen reader is connected; a failure is logged as {@code what}. */
+    private void call(String what, Call call) {
         IScreenReaderService s = sr;
-        if (s == null || text == null) return;
-        try {
+        if (s == null) return;
+        try { call.run(s); } catch (RemoteException e) { Log.e(TAG, what + " failed", e); }
+    }
+
+    /** What {@code query} returns, or {@code fallback} if the screen reader isn't connected or can't say. */
+    private <T> T query(Query<T> query, T fallback) {
+        IScreenReaderService s = sr;
+        if (s == null) return fallback;
+        try { return query.run(s); } catch (RemoteException e) { return fallback; }
+    }
+
+    void speak(String text) {
+        if (text == null) return;
+        call("speak", s -> {
             s.stopSpeaking();
             s.speakText(text);
-        } catch (RemoteException e) {
-            Log.e(TAG, "speak failed", e);
-        }
+        });
     }
 
-    int battery() {
-        IScreenReaderService s = sr;
-        if (s == null) return -1;
-        try { return s.getBatteryPercentage(); } catch (RemoteException e) { return -1; }
+    /** Speak without interrupting what is already being said. */
+    void speakQueued(String text) {
+        if (text != null) call("speakText", s -> s.speakText(text));
     }
 
-    String firmware() {
-        IScreenReaderService s = sr;
-        if (s == null) return null;
-        try { return s.getFirmwareVersion(); } catch (RemoteException e) { return null; }
-    }
+    int battery() { return query(IScreenReaderService::getBatteryPercentage, -1); }
 
-    String serial() {
-        IScreenReaderService s = sr;
-        if (s == null) return null;
-        try { return s.getSerialNumber(); } catch (RemoteException e) { return null; }
-    }
+    String firmware() { return query(IScreenReaderService::getFirmwareVersion, null); }
+
+    String serial() { return query(IScreenReaderService::getSerialNumber, null); }
 
     /** Tell the screen reader focus moved to a new control (it speaks it using the user's verbosity settings). */
-    void focusChanged(Bundle widget) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try { s.onFocusChanged(widget); } catch (RemoteException e) { Log.e(TAG, "onFocusChanged failed", e); }
-    }
+    void focusChanged(Bundle widget) { call("onFocusChanged", s -> s.onFocusChanged(widget)); }
 
     /** Tell the screen reader the selection changed within the current list/menu. */
-    void itemChanged(Bundle container) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try { s.onItemChanged(container); } catch (RemoteException e) { Log.e(TAG, "onItemChanged failed", e); }
-    }
+    void itemChanged(Bundle container) { call("onItemChanged", s -> s.onItemChanged(container)); }
 
     /** Announce an edit field (role 6) so the screen reader describes it and review commands read its text. */
     void focusEdit(String name, String content, int cursor) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try {
-            Bundle b = new Bundle();
-            b.putString("name", name);
-            b.putInt("roleId", 6);
-            b.putString("content", content);
-            b.putString("currentLine", content);
-            b.putInt("cursorPosition", cursor);
-            b.putBoolean("isMultiline", false);
-            b.putBoolean("isReadonly", false);
-            s.onFocusChanged(b);
-        } catch (RemoteException e) { Log.e(TAG, "focusEdit failed", e); }
+        Bundle b = new Bundle();
+        b.putString("name", name);
+        b.putInt("roleId", 6);
+        b.putString("content", content);
+        b.putString("currentLine", content);
+        b.putInt("cursorPosition", cursor);
+        b.putBoolean("isMultiline", false);
+        b.putBoolean("isReadonly", false);
+        focusChanged(b);
     }
 
     /** Echo one typed character the way Orbit's edit fields do (the screen reader handles capital pitch, etc.). */
     void characterTyped(String ch, boolean isCapital) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try {
-            Bundle b = new Bundle();
-            b.putString("character", ch);
-            b.putString("characterName", "");
-            b.putBoolean("isCapital", isCapital);
-            b.putString("resolvedWord", "");
-            s.onCharacterTyped(b);
-        } catch (RemoteException e) { Log.e(TAG, "onCharacterTyped failed", e); }
+        Bundle b = typed(ch, "", isCapital);
+        b.putString("resolvedWord", "");
+        call("onCharacterTyped", s -> s.onCharacterTyped(b));
     }
 
     /** Echo a T9 candidate character for the named edit field (the screen reader speaks it per the user's settings). */
     void characterTyped(String ch, String fieldName) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try {
-            Bundle b = new Bundle();
-            b.putString("character", ch);
-            b.putString("characterName", fieldName);
-            b.putBoolean("isCapital", false);
-            s.onCharacterTyped(b);
-        } catch (RemoteException e) { Log.e(TAG, "onCharacterTyped failed", e); }
+        Bundle b = typed(ch, fieldName, false);
+        call("onCharacterTyped", s -> s.onCharacterTyped(b));
+    }
+
+    private static Bundle typed(String ch, String characterName, boolean isCapital) {
+        Bundle b = new Bundle();
+        b.putString("character", ch);
+        b.putString("characterName", characterName);
+        b.putBoolean("isCapital", isCapital);
+        return b;
     }
 
     /**
@@ -243,67 +239,35 @@ final class ScreenReaderClient {
      * boundary_start, boundary_end, t9_mode_changed:NAME); a type it doesn't know just updates its copy silently.
      */
     void editBoxChanged(String fieldName, String content, int cursor, String changeType) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try {
-            Bundle b = new Bundle();
-            b.putString("widgetName", fieldName);
-            b.putString("content", content);
-            b.putInt("cursorPosition", cursor);
-            b.putString("changeType", changeType);
-            s.onEditBoxContentChanged(b);
-        } catch (RemoteException e) { Log.e(TAG, "onEditBoxContentChanged failed", e); }
-    }
-
-    /** Speak without interrupting what is already being said. */
-    void speakQueued(String text) {
-        IScreenReaderService s = sr;
-        if (s == null || text == null) return;
-        try { s.speakText(text); } catch (RemoteException e) { Log.e(TAG, "speakText failed", e); }
+        Bundle b = new Bundle();
+        b.putString("widgetName", fieldName);
+        b.putString("content", content);
+        b.putInt("cursorPosition", cursor);
+        b.putString("changeType", changeType);
+        call("onEditBoxContentChanged", s -> s.onEditBoxContentChanged(b));
     }
 
     /** One of the screen reader's sounds (1 = error, 9 = character committed). */
-    void playSound(int soundId) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try { s.playSound(soundId); } catch (RemoteException e) { Log.e(TAG, "playSound failed", e); }
-    }
+    void playSound(int soundId) { call("playSound", s -> s.playSound(soundId)); }
 
-    void vibrate(long millis) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try { s.vibrate(millis); } catch (RemoteException e) { Log.e(TAG, "vibrate failed", e); }
-    }
+    void vibrate(long millis) { call("vibrate", s -> s.vibrate(millis)); }
 
     /** The user's T9 character commit timeout in milliseconds (500 if the screen reader can't say). */
     int characterCommitTimeout() {
-        IScreenReaderService s = sr;
-        if (s == null) return 500;
-        try { int t = s.getCharacterCommitTimeout(); return t > 0 ? t : 500; } catch (RemoteException e) { return 500; }
+        int t = query(IScreenReaderService::getCharacterCommitTimeout, 500);
+        return t > 0 ? t : 500;
     }
 
     /** The user's T9 commit feedback: 1 sound, 2 speak, 3 vibrate, 4 sound and speak, 5 vibrate and speak, else none. */
-    int characterCommitFeedback() {
-        IScreenReaderService s = sr;
-        if (s == null) return 1;
-        try { return s.getCharacterCommitFeedback(); } catch (RemoteException e) { return 1; }
-    }
+    int characterCommitFeedback() { return query(IScreenReaderService::getCharacterCommitFeedback, 1); }
 
     /** Send a raw command to the keypad/MCU over the screen reader's open sendData channel. */
-    void sendData(byte command, byte[] payload) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try { s.sendData(command, payload); } catch (RemoteException e) { Log.e(TAG, "sendData failed", e); }
-    }
+    void sendData(byte command, byte[] payload) { call("sendData", s -> s.sendData(command, payload)); }
 
     void appOpened(String name) {
-        IScreenReaderService s = sr;
-        if (s == null) return;
-        try {
-            Bundle b = new Bundle();
-            b.putString("appName", name);
-            b.putString("focusedElement", "");
-            s.onAppOpened(b);
-        } catch (RemoteException ignored) { }
+        Bundle b = new Bundle();
+        b.putString("appName", name);
+        b.putString("focusedElement", "");
+        call("onAppOpened", s -> s.onAppOpened(b));
     }
 }

@@ -72,15 +72,8 @@ final class DeviceSetup {
                 // Not in this version of Orbit's launcher.
             }
         }
-        try {
-            int state = pm.getApplicationEnabledSetting(AUTOMATION_PACKAGE);
-            if (state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                    && state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
-                commands.add("pm disable-user --user 0 " + AUTOMATION_PACKAGE);
-            }
-        } catch (IllegalArgumentException e) {
-            // Not installed.
-        }
+        Integer automation = enabledState(pm, AUTOMATION_PACKAGE);
+        if (automation != null && !isDisabled(automation)) commands.add("pm disable-user --user 0 " + AUTOMATION_PACKAGE);
 
         // Turning the device makes screen readers lose their place, and nobody needs the screen to turn.
         if (Settings.System.getInt(resolver, Settings.System.ACCELEROMETER_ROTATION, 0) != 0) {
@@ -95,7 +88,7 @@ final class DeviceSetup {
             String wanted = withServices(current, SCREEN_READER_SERVICE,
                     isInstalled(pm, ORBIT_LAUNCHER) ? AUTOMATION_SERVICE : null);
             if (!wanted.equals(current)) {
-                commands.add("settings put secure enabled_accessibility_services '" + wanted + "'");
+                commands.add("settings put secure enabled_accessibility_services " + SetupBackup.quote(wanted));
             }
             if (Settings.Secure.getInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) != 1) {
                 commands.add("settings put secure accessibility_enabled 1");
@@ -116,7 +109,7 @@ final class DeviceSetup {
     }
 
     /** The enabled-services list with the given entries added if missing (compared ignoring case, as Android does). */
-    private static String withServices(String current, String... services) {
+    static String withServices(String current, String... services) {
         Set<String> entries = new LinkedHashSet<>();
         if (current != null) {
             for (String entry : current.split(":")) {
@@ -132,12 +125,27 @@ final class DeviceSetup {
         return String.join(":", entries);
     }
 
-    private static boolean isInstalled(PackageManager pm, String packageName) {
+    static boolean isInstalled(PackageManager pm, String packageName) {
         try {
             pm.getApplicationInfo(packageName, 0);
             return true;
         } catch (PackageManager.NameNotFoundException e) {
             return false;
         }
+    }
+
+    /** An app's enabled state (PackageManager.COMPONENT_ENABLED_STATE_*), or null if it isn't installed. */
+    static Integer enabledState(PackageManager pm, String packageName) {
+        try {
+            return pm.getApplicationEnabledSetting(packageName);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** Whether an enabled state is one of the turned-off ones that Orbit, or the user, sets. */
+    static boolean isDisabled(int state) {
+        return state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER;
     }
 }

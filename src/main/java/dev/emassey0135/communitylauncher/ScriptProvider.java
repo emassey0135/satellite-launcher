@@ -28,9 +28,7 @@ public final class ScriptProvider extends ContentProvider {
         if (!SetupSteps.SCRIPT.equals(uri.getLastPathSegment())) throw new FileNotFoundException(uri.toString());
         File f = new File(getContext().getCacheDir(), SetupSteps.SCRIPT);
         try (InputStream in = getContext().getAssets().open(SetupSteps.SCRIPT); OutputStream out = new FileOutputStream(f)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            Streams.copy(in, out);
         } catch (Exception e) {
             throw new FileNotFoundException(SetupSteps.SCRIPT);
         }

@@ -111,7 +111,7 @@ public final class SetupService extends Service {
                 android.os.SystemClock.sleep(held + LAST_MESSAGE_MS);
                 // Unless the launcher is in front already, which going home would only announce again.
                 if (!RootQuery.exec("dumpsys window | grep mCurrentFocus").output.contains(getPackageName() + "/")) {
-                    RootQuery.exec("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+                    RootQuery.exec(SetupSteps.GO_HOME);
                 }
             }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();
@@ -149,12 +149,14 @@ public final class SetupService extends Service {
     }
 
     /**
-     * Whether setup restarted the device and should carry on now that it is back up: it asked for a restart, and the
-     * device has started since. The launcher may also start in the moments between asking and the restart.
+     * Carries on with setup if it restarted the device: it asked for a restart, and the device has started since. The
+     * launcher may also start in the moments between asking and the restart.
      */
-    static boolean resumesAfterBoot(Context context) {
+    static void resumeIfRestarted(Context context) {
         SetupEngine.State state = new FileStore(context).load();
-        return SetupEngine.resumesAfterBoot(state) && !state.restartRequestedIn.equals(bootIdOf());
+        if (SetupEngine.resumesAfterBoot(state) && !state.restartRequestedIn.equals(bootIdOf())) {
+            context.startForegroundService(new Intent(context, SetupService.class).putExtra(EXTRA_RESUME, true));
+        }
     }
 
     /** Speak now if Orbit's screen reader is ready, or else as soon as it is. */

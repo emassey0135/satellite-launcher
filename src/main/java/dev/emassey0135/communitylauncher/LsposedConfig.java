@@ -28,6 +28,11 @@ final class LsposedConfig {
         return true;
     }
 
+    /** Whether {@code pkg} is in the list, turned on or not. */
+    static boolean isListed(SQLiteDatabase db, String pkg) {
+        return moduleId(db, pkg) != null;
+    }
+
     /** Add {@code pkg} if LSPosed hasn't yet, turn it on, and use it in every app in {@code scope}. */
     static void enable(SQLiteDatabase db, String pkg, String apkPath, String[] scope) {
         db.beginTransaction();

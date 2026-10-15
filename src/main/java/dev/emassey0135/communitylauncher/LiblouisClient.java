@@ -38,8 +38,7 @@ final class LiblouisClient {
 
     /** Whether Orbit's braille translation service is installed (the Speak has it; the Player, with no braille keys, doesn't). */
     private boolean available() {
-        try { context.getPackageManager().getPackageInfo("com.orbit.liblouisservice", 0); return true; }
-        catch (android.content.pm.PackageManager.NameNotFoundException e) { return false; }
+        return DeviceSetup.isInstalled(context.getPackageManager(), "com.orbit.liblouisservice");
     }
 
     void bind() {
@@ -94,13 +93,8 @@ final class LiblouisClient {
         for (String part : out.split("@@")) {
             int nl = part.indexOf('\n');
             if (nl < 0) continue;
-            String key = part.substring(0, nl).trim();
-            int i = part.indexOf("value=", nl);
-            if (i < 0) continue;
-            int end = part.indexOf(", type=", i);
-            if (end < 0) end = part.indexOf('\n', i);
-            if (end < 0) end = part.length();
-            map.put(key, part.substring(i + 6, end).trim());
+            String value = RootQuery.valueField(part, nl);
+            if (value != null) map.put(part.substring(0, nl).trim(), value);
         }
         return map;
     }

@@ -3,11 +3,9 @@ package dev.emassey0135.communitylauncher;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
-import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -65,7 +63,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         stack.push(new BrowseFrame(model.root));
         render(false);
         model.load(() -> render(true));
-        rescheduleOrbitAgendas();
+        BootReceiver.rescheduleOrbitAgendas(this);
 
         sr = new ScreenReaderClient(this, this);
         sr.setForeground(false); // until the window has focus: see onWindowFocusChanged
@@ -245,16 +243,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     private void toast(String msg) { if (sr != null) sr.speak(msg); }
 
-    private void rescheduleOrbitAgendas() {
-        sendOrbitBroadcast("com.orbit.ALARM_DATA", "com.orbit.alarmclock");
-        sendOrbitBroadcast("com.orbit.CALENDAR_DATA", "com.orbit.calendar");
-    }
-
-    private void sendOrbitBroadcast(String action, String pkg) {
-        try { sendBroadcast(new Intent(action).setPackage(pkg).putExtra("isDeviceRestarted", true)); }
-        catch (Exception ignored) { }
-    }
-
     // ---- launching & actions ----------------------------------------------------
 
     private void launch(Node app) {
@@ -336,13 +324,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
      */
     private String batteryText() {
         int orbit = sr.battery();
-        Intent status = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        int system = -1;
-        if (status != null) {
-            int level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-            int scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
-            if (level >= 0 && scale > 0) system = Math.round(level * 100f / scale);
-        }
+        int system = Power.batteryPercent(this);
         if (orbit < 0 && system < 0) return null;
         if (orbit < 0 || orbit == system) return "Battery " + (orbit < 0 ? system : orbit) + " percent";
         if (system < 0) return "Battery " + orbit + " percent";
@@ -400,8 +382,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             if (e == null) e = zip.getEntry("assets/userGuide/user_guide_en.docx");
             if (e == null) return false;
             try (InputStream in = zip.getInputStream(e); OutputStream os = new FileOutputStream(out)) {
-                byte[] buf = new byte[8192]; int n;
-                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                Streams.copy(in, os);
             }
             return true;
         }

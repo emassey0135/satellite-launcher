@@ -13,15 +13,18 @@ import android.content.Intent;
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
-        if (SetupService.resumesAfterBoot(context)) {
-            context.startForegroundService(new Intent(context, SetupService.class).putExtra(SetupService.EXTRA_RESUME, true));
-        }
-        send(context, "com.orbit.ALARM_DATA", "com.orbit.alarmclock");
-        send(context, "com.orbit.CALENDAR_DATA", "com.orbit.calendar");
+        SetupService.resumeIfRestarted(context);
+        rescheduleOrbitAgendas(context);
         DeviceSetup.applyInBackground(context, false);
     }
 
-    private void send(Context context, String action, String pkg) {
+    /** Has Orbit's alarm clock and calendar set their alarms and reminders again, as they do after a restart. */
+    static void rescheduleOrbitAgendas(Context context) {
+        send(context, "com.orbit.ALARM_DATA", "com.orbit.alarmclock");
+        send(context, "com.orbit.CALENDAR_DATA", "com.orbit.calendar");
+    }
+
+    private static void send(Context context, String action, String pkg) {
         try {
             context.sendBroadcast(new Intent(action).setPackage(pkg).putExtra("isDeviceRestarted", true));
         } catch (Exception ignored) { }
