@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
     env:
-      APK: orbit-community-launcher.apk
+      APK: satellite-launcher.apk
     steps:
       - uses: actions/checkout@v7
         with:

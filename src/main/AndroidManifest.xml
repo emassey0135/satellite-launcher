@@ -9,8 +9,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:name=".CommunityLauncherApp"
-        android:label="Community Launcher"
+        android:name=".LauncherApp"
+        android:label="Satellite Launcher"
         android:allowBackup="false">
         <!-- The launcher speaks for itself via Orbit's screen reader, so Backtalk steps aside and Orbit's hook
              routes the keypad to it (this launcher is no longer com.orbit.-prefixed, so it relies on that hook). -->
@@ -43,7 +43,7 @@
 
         <provider
             android:name=".GuideProvider"
-            android:authorities="dev.emassey0135.communitylauncher.guide"
+            android:authorities="dev.emassey0135.satellite.launcher.guide"
             android:exported="false"
             android:grantUriPermissions="true" />
 
@@ -57,7 +57,7 @@
         <!-- Serves only the public step aside script, which setup opens with Backtalk through root. -->
         <provider
             android:name=".ScriptProvider"
-            android:authorities="dev.emassey0135.communitylauncher.scripts"
+            android:authorities="dev.emassey0135.satellite.launcher.scripts"
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
 

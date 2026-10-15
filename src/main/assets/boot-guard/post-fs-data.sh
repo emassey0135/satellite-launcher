@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # Counts starts that don't finish (service.sh resets the count once one does). After three in a row, LSPosed is
 # turned off, so the next start is as the device came.
-DIR=/data/adb/orbit-setup
+DIR=/data/adb/satellite
 mkdir -p $DIR
 count=$(cat $DIR/unfinished-starts 2>/dev/null)
 count=$(( ${count:-0} + 1 ))

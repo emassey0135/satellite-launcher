@@ -2,7 +2,7 @@
 //
 // Orbit's own apps (com.orbit.*), and apps that declare that they speak for themselves (the orbit.self_voicing
 // manifest flag), speak through Orbit's screen reader, so Backtalk stays quiet in them instead of talking over
-// them. Notifications are still read while one of them is in front. The Community Launcher's setup installs this.
+// them. Notifications are still read while one of them is in front. Satellite's setup installs this.
 
 export const manifest = {
   id: 'orbit-step-aside',

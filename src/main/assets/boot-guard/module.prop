@@ -1,6 +1,6 @@
-id=orbit_boot_guard
-name=Orbit boot guard
+id=satellite_boot_guard
+name=Satellite boot guard
 version=1.0
 versionCode=1
 author=Elijah Massey
-description=Turns LSPosed off if the device can't finish starting, so that it starts as it came. Installed by the Community Launcher setup.
+description=Turns LSPosed off if the device can't finish starting, so that it starts as it came. Installed by Satellite setup.

@@ -2,7 +2,7 @@
 # Waits for the device to finish starting. If it hasn't after ten minutes (such as when the system keeps crashing
 # and starting over without a full restart, which post-fs-data.sh doesn't see), LSPosed is turned off and the device
 # restarts.
-DIR=/data/adb/orbit-setup
+DIR=/data/adb/satellite
 waited=0
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
   if [ $waited -ge 600 ]; then
