@@ -74,6 +74,7 @@ public final class SetupService extends Service {
                             if (!Power.go(sr, true)) throw new Exception("svc power reboot failed");
                         }
                     }, listener);
+            if (!started) waitUntilStarted();
             listener.say(started ? "Setting up the device." : "Continuing setup.");
             SetupEngine.Result result = engine.run(started);
             Log.i(TAG, "setup: " + result);
@@ -88,6 +89,28 @@ public final class SetupService extends Service {
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    /**
+     * Waits until the device has finished starting (sys.boot_completed). The launcher can start setup well before then,
+     * and Android announces it to apps only after a long queue of others.
+     */
+    private static void waitUntilStarted() {
+        for (int i = 0; i < 300; i++) {
+            try {
+                Process p = new ProcessBuilder("getprop", "sys.boot_completed").start();
+                String value;
+                try (java.io.BufferedReader r = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                    value = r.readLine();
+                }
+                p.destroy();
+                if ("1".equals(value == null ? null : value.trim())) return;
+            } catch (Exception e) {
+                return;
+            }
+            android.os.SystemClock.sleep(1000);
+        }
+    }
 
     /** Whether setup restarted the device and should carry on now that it is back up. */
     static boolean resumesAfterBoot(Context context) {

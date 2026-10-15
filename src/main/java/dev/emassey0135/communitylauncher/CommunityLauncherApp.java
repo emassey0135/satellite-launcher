@@ -67,5 +67,10 @@ public final class CommunityLauncherApp extends Application {
         packages.addDataScheme("package");
         registerReceiver(orbitPackages, packages);
         DeviceSetup.applyInBackground(this, true);
+        // As the home app, the launcher starts well before Android announces that the device has started, so carry on
+        // with setup from here if it restarted the device; BootReceiver does too, in case it isn't the home app yet.
+        if (SetupService.resumesAfterBoot(this)) {
+            startForegroundService(new Intent(this, SetupService.class).putExtra(SetupService.EXTRA_RESUME, true));
+        }
     }
 }
