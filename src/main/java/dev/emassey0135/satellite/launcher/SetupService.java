@@ -68,10 +68,18 @@ public final class SetupService extends Service {
     private static final long LAST_MESSAGE_MS = 4000;
     private boolean running;
 
+    /** Whether setup is running now, in this process (the launcher's, which shows the menu only when it isn't). */
+    private static volatile boolean active;
+    /** The last thing setup said, which the launcher repeats while setup runs. */
+    private static volatile String lastSaid = "";
+    /** Told when setup starts or ends. */
+    private static final List<Runnable> watchers = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         startForeground(1, notification());
         if (running) return START_NOT_STICKY;
         running = true;
+        setActive(true);
         boolean started = intent == null || !intent.getBooleanExtra(EXTRA_RESUME, false);
         boolean updating = intent != null && intent.getBooleanExtra(EXTRA_UPDATE, false);
         resuming = !started;
@@ -131,6 +139,7 @@ public final class SetupService extends Service {
                 }
             }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();
+            setActive(false);
         }, "setup").start();
         return START_NOT_STICKY;
     }
@@ -169,14 +178,38 @@ public final class SetupService extends Service {
      * launcher may also start in the moments between asking and the restart.
      */
     static void resumeIfRestarted(Context context) {
-        SetupEngine.State state = new FileStore(context).load();
-        if (SetupEngine.resumesAfterBoot(state) && !state.restartRequestedIn.equals(bootIdOf())) {
+        if (resumePending(context)) {
             context.startForegroundService(new Intent(context, SetupService.class).putExtra(EXTRA_RESUME, true));
         }
     }
 
+    /** Whether setup restarted the device, which has started since, so setup is about to carry on. */
+    private static boolean resumePending(Context context) {
+        SetupEngine.State state = new FileStore(context).load();
+        return SetupEngine.resumesAfterBoot(state) && !state.restartRequestedIn.equals(bootIdOf());
+    }
+
+    /** Whether setup is running, or about to carry on after its restart. */
+    static boolean isActive(Context context) {
+        return active || resumePending(context);
+    }
+
+    /** The last thing setup said. */
+    static String lastSaid() { return lastSaid; }
+
+    /** Have {@code watcher} told (on any thread) when setup starts or ends. */
+    static void watch(Runnable watcher) { watchers.add(watcher); }
+
+    static void unwatch(Runnable watcher) { watchers.remove(watcher); }
+
+    private static void setActive(boolean value) {
+        active = value;
+        for (Runnable watcher : watchers) watcher.run();
+    }
+
     /** Speak now if Orbit's screen reader is ready, or else as soon as it is. */
     private void say(String message) {
+        lastSaid = message;
         synchronized (unspoken) {
             if (sr == null || !sr.isScreenReaderReady() || android.os.SystemClock.uptimeMillis() < speakAfter) {
                 unspoken.add(message);

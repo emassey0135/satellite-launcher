@@ -73,6 +73,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         model.load(() -> render(true));
         BootReceiver.rescheduleOrbitAgendas(this);
 
+        SetupService.watch(setupChanged);
         sr = new ScreenReaderClient(this, this);
         sr.setForeground(false); // until the window has focus: see onWindowFocusChanged
         sr.bind();
@@ -117,7 +118,18 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         if (inFront && intent.hasCategory(Intent.CATEGORY_HOME)) resetToTop();
     }
 
+    /**
+     * Setup started or ended. While it runs, the launcher shows only that it does, so that nobody takes the device for
+     * set up or opens apps while setup works; once it ends, the menu is back, to be said with the next key, as setup
+     * says that it is done.
+     */
+    private final Runnable setupChanged = () -> main.post(() -> {
+        if (frame() != null) frame().requestTitle();
+        render(false);
+    });
+
     @Override protected void onDestroy() {
+        SetupService.unwatch(setupChanged);
         if (sr != null) sr.unbind();
         if (braille != null) braille.unbind();
         super.onDestroy();
@@ -150,6 +162,11 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     private void handleKey(String keyName, int action, boolean longPress) {
         // A window over the launcher (a system dialog) has the keypad; a key that was on its way when it opened isn't ours.
         if (!hasWindowFocus() || !model.isLoaded()) return;
+        if (SetupService.isActive(this)) {
+            // Nothing opens while setup runs; a key only says that it is, after what setup is saying.
+            if (action == 0 || action == 3) sr.speakQueued("Setup is still running. " + SetupService.lastSaid());
+            return;
+        }
         // The first key from a phone keypad (the Orbit Player, which has no Plus tier) shows the Plus apps.
         if (model.setPhoneKeypad(sr.isPhoneKeypad())) render(false);
         if (frame() instanceof TextEntryFrame) { ((TextEntryFrame) frame()).key(keyName, action, longPress); return; }
@@ -203,6 +220,11 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     private void render(boolean speak) {
         if (!model.isLoaded()) { view.setText("Loading"); return; } // announced once loaded
+        if (SetupService.isActive(this)) {
+            // Setup speaks for itself, and the menu comes back when it is done (setupChanged).
+            view.setText("Setting up the device\n\nPlease wait");
+            return;
+        }
         Frame f = frame();
         String item = f.size() == 0 ? "Empty" : f.labelAt(f.index());
         view.setText(f.title() + "\n\n" + item + (!f.isText() && f.size() > 0 ? "\n\n" + (f.index() + 1) + " of " + f.size() : ""));
@@ -429,6 +451,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
      * for each.
      */
     private void checkForUpdates(boolean asked) {
+        if (SetupService.isActive(this)) return; // setup brings everything up to date itself
         android.content.SharedPreferences prefs = getSharedPreferences("launcher", MODE_PRIVATE);
         long now = System.currentTimeMillis();
         if (!asked && now - prefs.getLong("updates_checked", 0) < UPDATE_CHECK_MS) return;
