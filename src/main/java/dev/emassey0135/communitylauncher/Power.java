@@ -6,6 +6,8 @@ import android.content.IntentFilter;
 import android.os.BatteryManager;
 import android.os.SystemClock;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Shuts down or restarts the device the way Orbit's screen reader does: tell the keypad's microcontroller first (UART
  * command 8: 3 to shut down, 4 to restart), then ask Android through root. Without the message, the microcontroller
@@ -29,10 +31,16 @@ final class Power {
         return RootQuery.exec(restart ? "svc power reboot" : "svc power shutdown").ok();
     }
 
-    /** {@link #go} on a thread of its own, from the main thread. */
+    /**
+     * {@link #go} on a thread of its own, from the main thread. Once the device is going down, choosing again does
+     * nothing.
+     */
     static void goInBackground(ScreenReaderClient sr, boolean restart) {
-        new Thread(() -> go(sr, restart), "power").start();
+        if (!going.compareAndSet(false, true)) return;
+        new Thread(() -> { if (!go(sr, restart)) going.set(false); }, "power").start();
     }
+
+    private static final AtomicBoolean going = new AtomicBoolean();
 
     /** Android's battery level in percent, or -1 if it doesn't know it. */
     static int batteryPercent(Context context) {

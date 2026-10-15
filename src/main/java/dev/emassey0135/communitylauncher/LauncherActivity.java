@@ -14,6 +14,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.TextView;
 
+import dev.emassey0135.communitylauncher.ActionFrame.Action;
 import dev.emassey0135.communitylauncher.LauncherModel.Node;
 
 import java.io.File;
@@ -35,7 +36,8 @@ import java.util.zip.ZipFile;
 /**
  * The home screen. A stack of {@link Frame}s drives navigation; the top frame handles keys. Browse frames show a
  * folder's visible contents (Plus gating applied); action frames show a flat list of operations (context menus,
- * move targets, hidden-app lists). Keys follow the Orbit Speak user guide.
+ * move targets, hidden-app lists). The keys are {@link MenuKeys}'; HOME on the Orbit Player goes to the top (see
+ * {@link #onNewIntent}).
  */
 public class LauncherActivity extends Activity implements ScreenReaderClient.Listener {
 
@@ -142,31 +144,16 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         // The first key from a phone keypad (the Orbit Player, which has no Plus tier) shows the Plus apps.
         if (model.setPhoneKeypad(sr.isPhoneKeypad())) render(false);
         if (frame() instanceof TextEntryFrame) { ((TextEntryFrame) frame()).key(keyName, action, longPress); return; }
-        // Orbit Speak keys: Up/Down move, Left back, Right/Select/Dot8 activate, Dot7 back,
-        // Space+M context menu, full-cell / Z chord to Home.
-        // Orbit Player: the same arrows and OK, plus BACK = back and MENU = context menu (HOME: see onNewIntent).
-        if (action == 0) {
-            switch (keyName) {
-                case "UP": if (longPress) frame().moveTo(0); else frame().move(-1); render(true); return;
-                case "DOWN": if (longPress) frame().moveTo(frame().size() - 1); else frame().move(1); render(true); return;
-                case "LEFT": back(); return;
-                case "RIGHT": case "OK": case "SELECT": frame().activate(); return;
-                case "BACK": if (!longPress) back(); return;
-                default: return;
-            }
-        }
-        if (action == 1) {
-            if (keyName.equals("DOT7")) back();
-            else if (keyName.equals("DOT8")) frame().activate();
-            else if (keyName.equals("MENU")) frame().menu();
-            return;
-        }
-        if (action == 3) {
-            if (keyName.equals("SPACE_DOT1_DOT3_DOT4")) frame().menu();
-            else if (keyName.equals("SPACE_DOT1_DOT2_DOT3_DOT5")) openRecents(); // Space+r: recents, as in Backtalk
-            else if (keyName.equals("SPACE_DOT1_DOT3_DOT4_DOT5")) openNotifications(); // Space+n: notification shade
-            else if (keyName.equals("SPACE_DOT1_DOT3_DOT5_DOT6")
-                    || keyName.equals("SPACE_DOT1_DOT2_DOT3_DOT4_DOT5_DOT6")) goHome();
+        MenuKeys.Command command = MenuKeys.of(keyName, action, longPress);
+        if (frame().navigate(command)) { render(true); return; }
+        switch (command) {
+            case BACK: back(); break;
+            case ACTIVATE: frame().activate(); break;
+            case MENU: frame().menu(); break;
+            case HOME: goHome(); break;
+            case RECENTS: openRecents(); break;
+            case NOTIFICATIONS: openNotifications(); break;
+            default: break;
         }
     }
 
@@ -206,9 +193,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     // Screen reader sounds used by the phone keypad text field.
     private static final int SOUND_ERROR = 1, SOUND_COMMIT = 9;
 
-    // Widget roles understood by the screen reader (subset we use).
-    private static final int ROLE_BUTTON = 1, ROLE_LIST_BOX = 5, ROLE_EDIT_BOX = 6;
-
     private void render(boolean speak) {
         if (!model.isLoaded()) { view.setText("Loading"); return; } // announced once loaded
         Frame f = frame();
@@ -225,20 +209,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             }
             return;
         }
-        // A list: new frame -> focus event (announces list name + item); a move -> item-changed event.
-        // The screen reader renders role, item and "N of M" per the user's own verbosity settings, and this
-        // feeds its model so the review commands read our items.
-        announceList(f, f.consumeTitleAnnouncement());
-    }
-
-    private void announceList(Frame f, boolean asFocus) {
-        Bundle b = new Bundle();
-        b.putString("name", f.title());
-        b.putInt("roleId", ROLE_LIST_BOX);
-        b.putInt("itemCount", f.size());
-        b.putInt("selectedIndex", f.size() == 0 ? -1 : f.index());
-        if (f.size() > 0) b.putString("selectedItem", f.labelAt(f.index()));
-        if (asFocus) sr.focusChanged(b); else sr.itemChanged(b);
+        f.announce(sr);
     }
 
     private void toast(String msg) { if (sr != null) sr.speak(msg); }
@@ -404,7 +375,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     private void openFormatConfirm() {
         List<Action> actions = new ArrayList<>();
-        actions.add(new Action("No, cancel", this::popToBrowse));
+        actions.add(new Action("No, cancel", () -> returnToBrowse(null)));
         actions.add(new Action("Yes, erase and format the SD card", this::formatSdCard));
         push(new ActionFrame("Format SD card? This erases everything on it", actions));
     }
@@ -429,23 +400,11 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     // ---- power ------------------------------------------------------------------
 
     private void openPowerMenu() {
-        List<Action> actions = new ArrayList<>();
-        actions.add(new Action("Shut Down", () -> confirmPower("Shut down the device", false)));
-        actions.add(new Action("Restart", () -> confirmPower("Restart the device", true)));
-        actions.add(new Action("Cancel", this::popToBrowse));
-        push(new ActionFrame("Power", actions));
-    }
-
-    private void confirmPower(String prompt, boolean restart) {
-        List<Action> actions = new ArrayList<>();
-        actions.add(new Action("No, cancel", this::popToBrowse));
-        actions.add(new Action("Yes, " + (restart ? "restart" : "shut down"), () -> power(restart)));
-        push(new ActionFrame(prompt + "?", actions));
-    }
-
-    private void power(boolean restart) {
-        sr.speak(restart ? "Restarting" : "Shutting down");
-        Power.goInBackground(sr, restart);
+        push(PowerMenu.frame(new PowerMenu.Host() {
+            @Override public void push(Frame frame) { LauncherActivity.this.push(frame); }
+            @Override public void cancel() { returnToBrowse(null); }
+            @Override public ScreenReaderClient screenReader() { return sr; }
+        }));
     }
 
     private void refreshLicense(boolean announce) {
@@ -504,7 +463,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
     private void openMoveTargets(Node node, Node container) {
         Map<String, Node> folders = model.moveTargets(node, container);
         List<Action> actions = new ArrayList<>();
-        if (folders.isEmpty()) actions.add(new Action("No other folders", () -> popToBrowse()));
+        if (folders.isEmpty()) actions.add(new Action("No other folders", () -> returnToBrowse(null)));
         for (Map.Entry<String, Node> e : folders.entrySet()) {
             Node dest = e.getValue();
             actions.add(new Action(e.getKey(), () -> {
@@ -521,7 +480,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         Map<String, String> hidden = model.hiddenApps();
         List<Action> actions = new ArrayList<>();
         if (hidden.isEmpty()) {
-            actions.add(new Action("No hidden apps", () -> popToBrowse()));
+            actions.add(new Action("No hidden apps", () -> returnToBrowse(null)));
         } else {
             for (Map.Entry<String, String> e : hidden.entrySet()) {
                 String pkg = e.getKey();
@@ -597,40 +556,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
 
     // ---- frames -----------------------------------------------------------------
 
-    private interface Frame {
-        String title();
-        int size();
-        int index();
-        void move(int delta);
-        void moveTo(int i);
-        String labelAt(int i);
-        void activate();
-        void menu();
-        void requestTitle();
-        boolean consumeTitleAnnouncement();
-        default boolean isText() { return false; }
-    }
-
-    private abstract class BaseFrame implements Frame {
-        int index;
-        boolean announceTitle = true;
-        @Override public int index() {
-            int n = size();
-            return n == 0 ? 0 : Math.min(index, n - 1); // the list can shrink when an app is removed
-        }
-        @Override public void move(int delta) {
-            int n = size();
-            if (n == 0) return;
-            index = ((index + delta) % n + n) % n;
-        }
-        @Override public void moveTo(int i) { if (size() > 0) index = Math.max(0, Math.min(size() - 1, i)); }
-        @Override public void requestTitle() { announceTitle = true; }
-        @Override public boolean consumeTitleAnnouncement() {
-            if (announceTitle) { announceTitle = false; return true; }
-            return false;
-        }
-    }
-
     /** Shows the visible children of one folder (Plus gating applied). */
     private final class BrowseFrame extends BaseFrame {
         final Node folder;
@@ -667,22 +592,6 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             int i = v.indexOf(n);
             if (i >= 0) index = i; else index = Math.min(index, Math.max(0, v.size() - 1));
         }
-    }
-
-    private static final class Action {
-        final String label; final Runnable run;
-        Action(String label, Runnable run) { this.label = label; this.run = run; }
-    }
-
-    /** A flat list of named operations. */
-    private final class ActionFrame extends BaseFrame {
-        final String title; final List<Action> actions;
-        ActionFrame(String title, List<Action> actions) { this.title = title; this.actions = actions; }
-        @Override public String title() { return title; }
-        @Override public int size() { return actions.size(); }
-        @Override public String labelAt(int i) { return actions.get(i).label; }
-        @Override public void activate() { if (!actions.isEmpty()) actions.get(Math.min(index, actions.size() - 1)).run.run(); }
-        @Override public void menu() { }
     }
 
     /**
