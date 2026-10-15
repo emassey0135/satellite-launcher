@@ -83,7 +83,7 @@ final class SetupSteps {
     private static final String BACKTALK_URL = "https://github.com/trypsynth/backtalk/releases/download/dev/backtalk.apk";
     private static final String BACKTALK_CERT = "8ddba1d5edf9b7470850b19f756e4755b6a4d99ee793d5d9b608918a91ba0eb0";
     /** The apps the hook runs in. */
-    private static final String[] HOOK_SCOPE = {"com.orbit.screenreader", "com.orbit.alarmclock"};
+    private static final String[] HOOK_SCOPE = {"com.orbit.screenreader", "com.orbit.alarmclock", "com.orbit.updater"};
     private static final String MAGISK_APP = "com.topjohnwu.magisk";
     /** Orbit's launcher, the home app the devices come with. */
     private static final String ORBIT_HOME = "com.orbit.homelauncher/.HomeLauncherActivity";
@@ -444,7 +444,7 @@ final class SetupSteps {
         return prefs.substring(set, end < 0 ? prefs.length() : end).contains("<string>" + HOOK + "</string>");
     }
 
-    /** LSPosed adds a newly installed module to its list turned off; turn it on, in Orbit's screen reader and alarm clock. */
+    /** LSPosed adds a newly installed module to its list turned off; turn it on, in the Orbit apps it fixes. */
     private Outcome enableHook() throws Exception {
         if (!root("[ -f " + LSPOSED_DB + " ]").ok()) {
             throw new StopException("LSPosed hasn't made its list of modules yet, so setup can't go on.");
