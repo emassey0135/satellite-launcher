@@ -33,11 +33,16 @@ import java.util.Locale;
  * turning it on where it was turned off, {@code --ez turn_off_dnd false} leaves Do Not Disturb as it is on the first
  * run rather than turning it off, and {@code --es locale en-GB} sets the device's language, which is otherwise left
  * alone.
+ *
+ * <p>Setup also brings the Orbit hook and the launcher up to date with their latest releases; the launcher starts it
+ * with {@link #EXTRA_UPDATE} when the user chooses to install updates.
  */
 public final class SetupService extends Service {
     private static final String TAG = LauncherModel.TAG;
     /** Set when the device has come back up from setup's own restart, rather than someone starting setup. */
     static final String EXTRA_RESUME = "resume";
+    /** Set when the user chose to install updates, which setup brings in with everything else. */
+    static final String EXTRA_UPDATE = "update";
     /** Where the computer's choices are kept. */
     static final String OPTIONS = "setup";
     /** Whether to turn Google Play on where it was turned off (default true). */
@@ -68,6 +73,7 @@ public final class SetupService extends Service {
         if (running) return START_NOT_STICKY;
         running = true;
         boolean started = intent == null || !intent.getBooleanExtra(EXTRA_RESUME, false);
+        boolean updating = intent != null && intent.getBooleanExtra(EXTRA_UPDATE, false);
         resuming = !started;
         android.content.SharedPreferences options = getSharedPreferences(OPTIONS, MODE_PRIVATE);
         for (String option : new String[] {EXTRA_GOOGLE_PLAY, EXTRA_TURN_OFF_DND}) {
@@ -93,7 +99,8 @@ public final class SetupService extends Service {
         sr.bind();
         new Thread(() -> {
             SetupEngine.Listener listener = new Listener(this);
-            SetupEngine engine = new SetupEngine(new SetupSteps(this, listener).steps(), new FileStore(this),
+            SetupSteps steps = new SetupSteps(this, listener);
+            SetupEngine engine = new SetupEngine(steps.steps(), new FileStore(this),
                     new SetupEngine.Device() {
                         @Override public String bootId() { return bootIdOf(); }
                         @Override public void restart() throws Exception {
@@ -101,10 +108,11 @@ public final class SetupService extends Service {
                         }
                     }, listener);
             if (!started) waitUntilStarted();
-            listener.say(started ? "Setting up the device." : "Continuing setup.");
+            listener.say(!started ? "Continuing setup." : updating ? "Installing updates." : "Setting up the device.");
             SetupEngine.Result result = engine.run(started);
             Log.i(TAG, "setup: " + result);
             if (result == SetupEngine.Result.FINISHED) {
+                File update = steps.launcherUpdate();
                 // Finish at home, wherever setup left the user (such as Backtalk's script settings), once the last
                 // message has been said: the launcher's own announcement would cut it off.
                 long held = Math.max(0, speakAfter - android.os.SystemClock.uptimeMillis());
@@ -112,6 +120,13 @@ public final class SetupService extends Service {
                 // Unless the launcher is in front already, which going home would only announce again.
                 if (!RootQuery.exec("dumpsys window | grep mCurrentFocus").output.contains(getPackageName() + "/")) {
                     RootQuery.exec(SetupSteps.GO_HOME);
+                }
+                if (update != null) {
+                    // Last, as installing it stops the launcher, and this with it; Android starts it again as the home app.
+                    listener.say("Updating the launcher. It starts again by itself.");
+                    android.os.SystemClock.sleep(LAST_MESSAGE_MS);
+                    listener.log("updating the launcher");
+                    RootQuery.exec("pm install -r " + update);
                 }
             }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();

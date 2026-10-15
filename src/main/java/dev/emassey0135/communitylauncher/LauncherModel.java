@@ -251,6 +251,7 @@ class LauncherModel { // not final: tests replace isSelfVoicing, which needs a P
         Node tools = Node.folder("Tools");
         tools.children.add(Node.action("battery", "Check Battery Status"));
         addApps(tools, TOOLS_APPS, installed, used);
+        tools.children.add(Node.action("updates", "Check for Updates"));
         tools.children.add(Node.action("format", "Format SD Card"));
         root.children.add(tools);
 
@@ -333,6 +334,7 @@ class LauncherModel { // not final: tests replace isSelfVoicing, which needs a P
                 {"time", "Check Current Time", "Clock and Time Management"},
                 {"date", "Check Current Date", "Clock and Time Management"},
                 {"battery", "Check Battery Status", "Tools"},
+                {"updates", "Check for Updates", "Tools"},
                 {"format", "Format SD Card", "Tools"},
                 {"sr_settings", "Screen Reader Settings", "Settings"},
                 {"userguide", "User Guide", "Help"},

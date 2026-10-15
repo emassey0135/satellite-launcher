@@ -74,10 +74,6 @@ final class SetupSteps {
     private static final String LSPOSED_SHA256 = "0ebc6bcb465d1c4b44b7220ab5f0252e6b4eb7fe43da74650476d2798bb29622";
     private static final int LSPOSED_VERSION = 7024;
     private static final String HOOK_APK = "orbit-hook.apk";
-    private static final String HOOK_URL =
-            "https://github.com/emassey0135/orbit-hook/releases/latest/download/orbit-hook.apk";
-    /** The SHA-256 of the hook's release signing certificate, which GitHub Actions signs its builds with. */
-    private static final String HOOK_CERT = "ea01d604414c28b2cdbfcec819cc6e444ba1e888f51a1f7506e62c0964b6c019";
     private static final String BACKTALK_APK = "backtalk.apk";
     /** Backtalk's development builds, which it updates itself from. */
     private static final String BACKTALK_URL = "https://github.com/trypsynth/backtalk/releases/download/dev/backtalk.apk";
@@ -357,7 +353,7 @@ final class SetupSteps {
         boolean downloaded = apk == null;
         if (downloaded) apk = download(BACKTALK_URL, BACKTALK_APK, "Backtalk");
         PackageInfo info = archiveInfo(apk, PackageManager.GET_ACTIVITIES);
-        if (info == null || !BACKTALK.equals(info.packageName) || (downloaded && !BACKTALK_CERT.equals(signer(info)))) {
+        if (info == null || !BACKTALK.equals(info.packageName) || (downloaded && !BACKTALK_CERT.equals(Updates.signer(info)))) {
             throw new StopException("The Backtalk that setup got isn't Backtalk's own.");
         }
         if (!hasApprovalActivity(info)) {
@@ -371,22 +367,70 @@ final class SetupSteps {
         return Outcome.DONE;
     }
 
+    /**
+     * The hook from the computer if it gave one, else its latest release, if the hook isn't installed or the release is
+     * newer. A hook that is already in use is loaded into Orbit's apps only when they start again, so updating it
+     * needs a restart.
+     */
     private Outcome installHook() throws Exception {
         PackageInfo current = installed(HOOK);
         File apk = fetchPayloadIfPresent(HOOK_APK);
         boolean downloaded = apk == null;
         if (downloaded) {
-            if (current != null) return Outcome.DONE; // only a hook from the computer replaces an installed one
-            apk = download(HOOK_URL, HOOK_APK, "the Orbit hook");
+            if (current != null && !newerRelease(Updates.App.HOOK)) return Outcome.DONE;
+            apk = download(Updates.App.HOOK.apkUrl(), HOOK_APK, "the Orbit hook");
         }
         PackageInfo info = archiveInfo(apk, 0);
-        if (info == null || !HOOK.equals(info.packageName) || (downloaded && !HOOK_CERT.equals(signer(info)))) {
+        if (info == null || !HOOK.equals(info.packageName) || (downloaded && !Updates.CERT.equals(Updates.signer(info)))) {
             throw new StopException("The Orbit hook that setup got isn't the Orbit hook.");
         }
         if (current != null && current.getLongVersionCode() >= info.getLongVersionCode()) return Outcome.DONE;
         install(apk, "the Orbit hook");
-        listener.say("Installed the Orbit hook.");
-        return Outcome.DONE;
+        if (current == null) {
+            listener.say("Installed the Orbit hook.");
+            return Outcome.DONE;
+        }
+        listener.say("Updated the Orbit hook.");
+        return Outcome.NEEDS_RESTART;
+    }
+
+    /**
+     * A newer release of this launcher, downloaded and checked, for setup to install once it is done (installing it
+     * stops the launcher, setup with it); null if there is none, or it can't be had.
+     */
+    File launcherUpdate() {
+        if (!newerRelease(Updates.App.LAUNCHER)) return null;
+        try {
+            File apk = download(Updates.App.LAUNCHER.apkUrl(), Updates.App.LAUNCHER.apk, "the launcher's update");
+            PackageInfo info = archiveInfo(apk, 0);
+            if (info == null || !LAUNCHER.equals(info.packageName) || !Updates.CERT.equals(Updates.signer(info))) {
+                listener.log("the launcher's update isn't the launcher");
+                return null;
+            }
+            return apk;
+        } catch (Exception e) {
+            listener.log("the launcher's update failed: " + e);
+            return null;
+        }
+    }
+
+    /**
+     * Whether {@code app} has a newer release that can replace the copy installed (a copy signed with the release key).
+     * Without the network, the installed copy is kept.
+     */
+    private boolean newerRelease(Updates.App app) {
+        if (!Updates.updatable(pm, app)) return false;
+        Updates.Release release;
+        try {
+            release = Updates.latest(app);
+        } catch (java.io.IOException e) {
+            listener.log("couldn't read the latest release of " + app.name + ": " + e);
+            return false;
+        }
+        if (release == null) return false; // none yet
+        boolean newer = Updates.isNewer(pm, release);
+        listener.log("latest release of " + app.name + ": " + release.versionName + (newer ? ", newer" : ""));
+        return newer;
     }
 
     /**
@@ -771,12 +815,6 @@ final class SetupSteps {
 
     private PackageInfo archiveInfo(File apk, int flags) {
         return pm.getPackageArchiveInfo(apk.getPath(), flags | PackageManager.GET_SIGNATURES);
-    }
-
-    /** The SHA-256 of the certificate an APK is signed with, as apksigner prints it. */
-    private static String signer(PackageInfo info) throws Exception {
-        if (info.signatures == null || info.signatures.length != 1) return null;
-        return sha256(info.signatures[0].toByteArray());
     }
 
     /** Whether a Backtalk APK can use another app as a braille display: it has the screen that asks the user. */

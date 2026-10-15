@@ -85,6 +85,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
         inFront = true;
         model.refreshApps(() -> render(false)); // apps may have been installed, removed, enabled or disabled meanwhile
         if (started) refreshLicense(false);    // Plus may have been bought or have run out meanwhile
+        if (started) checkForUpdates(false);
         if (sr != null) sr.register();
         if (frame() != null) frame().requestTitle(); // returning from an app: re-announce as a focus change
         render(true);
@@ -132,6 +133,7 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
                 started = true;
                 sr.appOpened("Launcher");
                 refreshLicense(false);
+                checkForUpdates(false);
             }
             render(true);
         });
@@ -274,6 +276,9 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             case "plus":
                 refreshLicense(true);
                 break;
+            case "updates":
+                checkForUpdates(true);
+                break;
             case "recents":
                 openRecents();
                 break;
@@ -411,6 +416,62 @@ public class LauncherActivity extends Activity implements ScreenReaderClient.Lis
             @Override public void cancel() { returnToBrowse(null); }
             @Override public ScreenReaderClient screenReader() { return sr; }
         }));
+    }
+
+    // ---- updates ----------------------------------------------------------------------------------------------------
+
+    /** How often the launcher looks for updates by itself, when it comes to the front. */
+    private static final long UPDATE_CHECK_MS = 24 * 60 * 60 * 1000L;
+
+    /**
+     * Look for newer releases of the hook and the launcher ({@link Updates}). Asked for (Check for Updates), it says what
+     * it found and offers to install it. By itself, at most once a day, it only says that an update is available, once
+     * for each.
+     */
+    private void checkForUpdates(boolean asked) {
+        android.content.SharedPreferences prefs = getSharedPreferences("launcher", MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        if (!asked && now - prefs.getLong("updates_checked", 0) < UPDATE_CHECK_MS) return;
+        prefs.edit().putLong("updates_checked", now).apply();
+        if (asked) sr.speak("Checking for updates");
+        new Thread(() -> {
+            List<Updates.Release> releases = Updates.available(getPackageManager());
+            main.post(() -> {
+                if (releases == null) {
+                    if (asked) toast("Couldn't check for updates. Check that the device is connected to Wi-Fi.");
+                } else if (releases.isEmpty()) {
+                    if (asked) toast("Everything is up to date.");
+                } else if (asked) {
+                    offerUpdates(releases);
+                } else {
+                    String found = describe(releases);
+                    if (!found.equals(prefs.getString("updates_announced", ""))) {
+                        prefs.edit().putString("updates_announced", found).apply();
+                        sr.speakQueued("An update is available: " + found + ". Check for Updates is in the Tools folder.");
+                    }
+                }
+            });
+        }, "updates").start();
+    }
+
+    private void offerUpdates(List<Updates.Release> releases) {
+        boolean restarts = false;
+        for (Updates.Release r : releases) restarts |= r.app == Updates.App.HOOK;
+        List<Action> actions = new ArrayList<>();
+        actions.add(new Action("Install now", () -> {
+            popToBrowse();
+            startForegroundService(new Intent(this, SetupService.class).putExtra(SetupService.EXTRA_UPDATE, true));
+        }));
+        actions.add(new Action("Not now", () -> returnToBrowse(null)));
+        push(new ActionFrame("Update " + describe(releases) + "? "
+                + (restarts ? "The device restarts to finish." : "The launcher starts again by itself."), actions));
+    }
+
+    /** Like "the Orbit hook to 0.6.0 and the Community Launcher to 0.2.0". */
+    private static String describe(List<Updates.Release> releases) {
+        List<String> parts = new ArrayList<>();
+        for (Updates.Release r : releases) parts.add(r.app.name + " to " + r.versionName);
+        return String.join(" and ", parts);
     }
 
     private void refreshLicense(boolean announce) {
