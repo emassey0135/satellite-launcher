@@ -76,8 +76,8 @@ final class SetupSteps {
     private static final String HOOK_APK = "orbit-hook.apk";
     private static final String HOOK_URL =
             "https://github.com/emassey0135/orbit-hook/releases/latest/download/orbit-hook.apk";
-    /** The SHA-256 of the hook's release signing certificate; until there is one, the hook isn't downloaded. */
-    private static final String HOOK_CERT = null;
+    /** The SHA-256 of the hook's release signing certificate, which GitHub Actions signs its builds with. */
+    private static final String HOOK_CERT = "ea01d604414c28b2cdbfcec819cc6e444ba1e888f51a1f7506e62c0964b6c019";
     private static final String BACKTALK_APK = "backtalk.apk";
     /** Backtalk's development builds, which it updates itself from. */
     private static final String BACKTALK_URL = "https://github.com/trypsynth/backtalk/releases/download/dev/backtalk.apk";
@@ -377,7 +377,6 @@ final class SetupSteps {
         boolean downloaded = apk == null;
         if (downloaded) {
             if (current != null) return Outcome.DONE; // only a hook from the computer replaces an installed one
-            if (HOOK_CERT == null) throw new StopException("The setup files don't include the Orbit hook.");
             apk = download(HOOK_URL, HOOK_APK, "the Orbit hook");
         }
         PackageInfo info = archiveInfo(apk, 0);
