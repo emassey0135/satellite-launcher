@@ -109,7 +109,10 @@ public final class SetupService extends Service {
                 // message has been said: the launcher's own announcement would cut it off.
                 long held = Math.max(0, speakAfter - android.os.SystemClock.uptimeMillis());
                 android.os.SystemClock.sleep(held + LAST_MESSAGE_MS);
-                RootQuery.exec("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+                // Unless the launcher is in front already, which going home would only announce again.
+                if (!RootQuery.exec("dumpsys window | grep mCurrentFocus").output.contains(getPackageName() + "/")) {
+                    RootQuery.exec("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+                }
             }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();
         }, "setup").start();
