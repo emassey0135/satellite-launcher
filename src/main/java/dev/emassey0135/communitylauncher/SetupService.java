@@ -112,9 +112,13 @@ public final class SetupService extends Service {
         }
     }
 
-    /** Whether setup restarted the device and should carry on now that it is back up. */
+    /**
+     * Whether setup restarted the device and should carry on now that it is back up: it asked for a restart, and the
+     * device has started since. The launcher may also start in the moments between asking and the restart.
+     */
     static boolean resumesAfterBoot(Context context) {
-        return SetupEngine.resumesAfterBoot(new FileStore(context).load());
+        SetupEngine.State state = new FileStore(context).load();
+        return SetupEngine.resumesAfterBoot(state) && !state.restartRequestedIn.equals(bootIdOf());
     }
 
     /** Speak now if Orbit's screen reader is ready, or else as soon as it is. */
