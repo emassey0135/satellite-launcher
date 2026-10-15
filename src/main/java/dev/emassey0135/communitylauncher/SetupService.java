@@ -50,6 +50,17 @@ public final class SetupService extends Service {
 
     private ScreenReaderClient sr;
     private final List<String> unspoken = new ArrayList<>();
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    /**
+     * Messages wait until this time (uptime). After setup's own restart, Orbit's screen reader says it is ready before
+     * its speech engine is, and then its welcome message cuts off whatever it was asked to say.
+     */
+    private volatile long speakAfter;
+    private boolean resuming;
+    /** How long after Orbit's screen reader is ready, after a restart, that setup first speaks. */
+    private static final long SPEAK_AFTER_RESTART_MS = 6000;
+    /** How long setup's last message has before going home makes the launcher speak. */
+    private static final long LAST_MESSAGE_MS = 4000;
     private boolean running;
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -57,6 +68,7 @@ public final class SetupService extends Service {
         if (running) return START_NOT_STICKY;
         running = true;
         boolean started = intent == null || !intent.getBooleanExtra(EXTRA_RESUME, false);
+        resuming = !started;
         android.content.SharedPreferences options = getSharedPreferences(OPTIONS, MODE_PRIVATE);
         for (String option : new String[] {EXTRA_GOOGLE_PLAY, EXTRA_TURN_OFF_DND}) {
             if (intent != null && intent.hasExtra(option)) {
@@ -67,7 +79,15 @@ public final class SetupService extends Service {
             options.edit().putString(EXTRA_LOCALE, intent.getStringExtra(EXTRA_LOCALE)).commit();
         }
         sr = new ScreenReaderClient(this, new ScreenReaderClient.Listener() {
-            @Override public void onReady() { if (sr.isScreenReaderReady()) speakUnspoken(); }
+            @Override public void onReady() {
+                if (!sr.isScreenReaderReady()) return;
+                if (resuming && speakAfter == 0) {
+                    speakAfter = android.os.SystemClock.uptimeMillis() + SPEAK_AFTER_RESTART_MS;
+                    main.postDelayed(SetupService.this::speakUnspoken, SPEAK_AFTER_RESTART_MS);
+                } else {
+                    speakUnspoken();
+                }
+            }
             @Override public void onKey(String keyName, int action, boolean longPress) { }
         }, null);
         sr.bind();
@@ -84,6 +104,13 @@ public final class SetupService extends Service {
             listener.say(started ? "Setting up the device." : "Continuing setup.");
             SetupEngine.Result result = engine.run(started);
             Log.i(TAG, "setup: " + result);
+            if (result == SetupEngine.Result.FINISHED) {
+                // Finish at home, wherever setup left the user (such as Backtalk's script settings), once the last
+                // message has been said: the launcher's own announcement would cut it off.
+                long held = Math.max(0, speakAfter - android.os.SystemClock.uptimeMillis());
+                android.os.SystemClock.sleep(held + LAST_MESSAGE_MS);
+                RootQuery.exec("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+            }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();
         }, "setup").start();
         return START_NOT_STICKY;
@@ -130,12 +157,16 @@ public final class SetupService extends Service {
     /** Speak now if Orbit's screen reader is ready, or else as soon as it is. */
     private void say(String message) {
         synchronized (unspoken) {
-            if (sr == null || !sr.isScreenReaderReady()) { unspoken.add(message); return; }
+            if (sr == null || !sr.isScreenReaderReady() || android.os.SystemClock.uptimeMillis() < speakAfter) {
+                unspoken.add(message);
+                return;
+            }
         }
         sr.speak(message);
     }
 
     private void speakUnspoken() {
+        if (android.os.SystemClock.uptimeMillis() < speakAfter) return; // a later call says them
         List<String> messages;
         synchronized (unspoken) {
             messages = new ArrayList<>(unspoken);

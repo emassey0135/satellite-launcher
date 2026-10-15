@@ -148,8 +148,7 @@ final class SetupSteps {
                 step("let the Orbit hook be Backtalk's braille display", this::allowDisplay),
                 step("turn Backtalk on", this::enableBacktalk),
                 step("check that Backtalk uses the Orbit's keys", this::checkDisplay),
-                step("install the step aside script", this::installScript),
-                step("go to the home screen", this::goHome));
+                step("install the step aside script", this::installScript));
     }
 
     private interface Action {
@@ -623,12 +622,6 @@ final class SetupSteps {
     /** Whether {@code tag} is a language tag such as en or en-GB, and so safe to put in a command. */
     static boolean isLanguageTag(String tag) {
         return tag.matches("[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*");
-    }
-
-    /** Finish at home, wherever setup left the user (such as Backtalk's script settings after it asked). */
-    private Outcome goHome() {
-        root("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
-        return Outcome.DONE;
     }
 
     /**
