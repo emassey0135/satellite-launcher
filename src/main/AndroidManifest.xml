@@ -19,6 +19,7 @@
         <activity
             android:name=".PowerDialogActivity"
             android:exported="false"
+            android:taskAffinity=""
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
             android:noHistory="true"
