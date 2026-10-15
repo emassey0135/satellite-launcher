@@ -49,6 +49,10 @@
 
         <!-- Not exported: the computer starts it with root. -->
         <service android:name=".SetupService" android:exported="false" />
+        <service
+            android:name=".SetupResumeJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Serves only the public step aside script, which setup opens with Backtalk through root. -->
         <provider

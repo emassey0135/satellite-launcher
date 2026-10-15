@@ -25,8 +25,8 @@ import java.util.Locale;
  * Runs the device setup ({@link SetupSteps}) and speaks its progress through Orbit's screen reader. The computer starts
  * it with root, since it isn't exported:
  * {@code adb shell su -c am start-foreground-service -n dev.emassey0135.communitylauncher/.SetupService}
- * and {@link BootReceiver} starts it again after setup restarts the device. It writes what it does to
- * {@code files/setup.log}.
+ * and {@link SetupResumeJob} starts it again after setup restarts the device, or {@link BootReceiver} if that doesn't.
+ * It writes what it does to {@code files/setup.log}.
  *
  * <p>The computer's choices, each on unless a start says otherwise and kept for later runs (including after setup's
  * restarts) until another start changes it: {@code --ez google_play false} leaves Google Play as it is rather than
@@ -104,6 +104,7 @@ public final class SetupService extends Service {
                     new SetupEngine.Device() {
                         @Override public String bootId() { return bootIdOf(); }
                         @Override public void restart() throws Exception {
+                            SetupResumeJob.schedule(SetupService.this);
                             if (!Power.go(sr, true)) throw new Exception("svc power reboot failed");
                         }
                     }, listener);
