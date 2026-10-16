@@ -95,17 +95,24 @@ final class DeviceSetup {
             }
         }
 
-        if (rootGrants) {
-            StringBuilder uids = new StringBuilder().append(context.getApplicationInfo().uid);
-            for (ApplicationInfo info : pm.getInstalledApplications(0)) {
-                if (info.packageName.startsWith(ORBIT_PREFIX)) uids.append(',').append(info.uid);
-            }
-            commands.add("magisk --sqlite \"UPDATE policies SET notification=0 WHERE uid IN (" + uids + ")\"");
-        }
+        if (rootGrants) commands.add(quietRootNotices(context));
 
         if (commands.isEmpty()) return;
         Log.i(TAG, "device setup: " + commands);
         RootQuery.run(String.join("; ", commands));
+    }
+
+    /**
+     * The command that turns off Magisk's notices for this launcher's and Orbit's apps' root commands, which it otherwise
+     * shows, and Backtalk reads, each time. Orbit's apps use root as the device starts, so with their notices on, Magisk
+     * even opens its app briefly then.
+     */
+    static String quietRootNotices(Context context) {
+        StringBuilder uids = new StringBuilder().append(context.getApplicationInfo().uid);
+        for (ApplicationInfo info : context.getPackageManager().getInstalledApplications(0)) {
+            if (info.packageName.startsWith(ORBIT_PREFIX)) uids.append(',').append(info.uid);
+        }
+        return "magisk --sqlite \"UPDATE policies SET notification=0 WHERE uid IN (" + uids + ")\"";
     }
 
     /** The enabled-services list with the given entries added if missing (compared ignoring case, as Android does). */

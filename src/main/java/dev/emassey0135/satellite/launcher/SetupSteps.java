@@ -123,6 +123,7 @@ final class SetupSteps {
                 step("check the device", this::checkDevice),
                 step("keep a home app until setup finishes", this::keepHome),
                 step("back up what setup changes", this::backUp),
+                step("turn off root notices for Orbit's apps", this::quietRootNotices),
                 step("repair Magisk", this::repairMagisk),
                 step("set the device's language", this::setLocale),
                 SetupEngine.RESTART,
@@ -244,6 +245,15 @@ final class SetupSteps {
                 + STATE_DIR + "/restore.sh && chmod 700 " + STATE_DIR + "/restore.sh", "Setup couldn't save its backup.");
         options.edit().putBoolean(DND_PENDING, true).apply();
         listener.say("Saved a backup of the device's settings.");
+        return Outcome.DONE;
+    }
+
+    /**
+     * As soon as the backup has recorded them, so that Magisk doesn't announce Orbit's apps' root commands through setup's
+     * restarts. The launcher keeps them off afterwards ({@link DeviceSetup}).
+     */
+    private Outcome quietRootNotices() {
+        root(DeviceSetup.quietRootNotices(context));
         return Outcome.DONE;
     }
 
