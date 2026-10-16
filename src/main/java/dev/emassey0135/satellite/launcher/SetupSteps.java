@@ -8,6 +8,8 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.sqlite.SQLiteDatabase;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.SystemClock;
 import android.provider.Settings;
@@ -23,6 +25,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
@@ -47,6 +50,11 @@ import java.util.zip.ZipFile;
 final class SetupSteps {
     static final String LAUNCHER = "dev.emassey0135.satellite.launcher";
     static final String PAYLOAD = "/data/local/tmp/satellite";
+    /**
+     * Where the installer puts what it downloaded for setup, so that the device needn't be online. Unlike the user's own
+     * files in {@link #PAYLOAD}, these are checked as setup's own downloads are.
+     */
+    static final String DOWNLOADED = PAYLOAD + "/downloaded";
     /** Where setup keeps its backup and the boot guard its count; only root can read it. */
     static final String STATE_DIR = "/data/adb/satellite";
     static final String HOOK = "dev.emassey0135.satellite.hook";
@@ -121,6 +129,7 @@ final class SetupSteps {
     List<Step> steps() {
         return Arrays.asList(
                 step("check the device", this::checkDevice),
+                step("check the internet connection", this::checkInternet),
                 step("keep a home app until setup finishes", this::keepHome),
                 step("back up what setup changes", this::backUp),
                 step("turn off root notices for Orbit's apps", this::quietRootNotices),
@@ -176,6 +185,29 @@ final class SetupSteps {
                     + "or connect the charger, and start setup again.");
         }
         return Outcome.DONE;
+    }
+
+    /**
+     * Before anything is changed: if setup will have to download something, the device must be online, or setup would
+     * stop partway, once it came to the download.
+     */
+    private Outcome checkInternet() throws StopException {
+        List<String> needed = new ArrayList<>();
+        if (!lsposedInstalled() && !haveFile(LSPOSED_ZIP)) needed.add("LSPosed");
+        if (installed(HOOK) == null && !haveFile(HOOK_APK)) needed.add("the Satellite hook");
+        if (!(installed(BACKTALK) != null && backtalkHasDisplayApi()) && !haveFile(BACKTALK_APK)) needed.add("Backtalk");
+        if (needed.isEmpty() || online()) return Outcome.DONE;
+        String what = needed.size() == 1 ? needed.get(0)
+                : String.join(", ", needed.subList(0, needed.size() - 1)) + " and " + needed.get(needed.size() - 1);
+        throw new StopException("Setup needs to download " + what + ", and the device isn't connected to the internet. "
+                + "Connect it to Wi-Fi, then start setup again.");
+    }
+
+    /** Whether the device has a working internet connection, as Android has checked. */
+    private boolean online() {
+        ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
+        NetworkCapabilities caps = cm.getNetworkCapabilities(cm.getActiveNetwork());
+        return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
     }
 
     /**
@@ -327,8 +359,7 @@ final class SetupSteps {
             throw new StopException("LSPosed was turned off because the device couldn't finish starting with it. Setup "
                     + "won't turn it on again; the log on the device says more.");
         }
-        String version = propValue(root("cat " + LSPOSED_MODULE + "/module.prop 2>/dev/null").output, "versionCode");
-        if (version != null && Integer.parseInt(version.trim()) >= LSPOSED_VERSION) {
+        if (lsposedInstalled()) {
             if (root("[ -e " + LSPOSED_MODULE + "/disable ] || [ -e " + LSPOSED_MODULE + "/remove ]").ok()) {
                 throw new StopException("LSPosed is turned off or being removed in Magisk. Turn it on in Magisk, then "
                         + "start setup again.");
@@ -336,7 +367,7 @@ final class SetupSteps {
             return Outcome.DONE;
         }
         File zip = fetchPayloadIfPresent(LSPOSED_ZIP);
-        if (zip == null) zip = download(LSPOSED_URL, LSPOSED_ZIP, "LSPosed");
+        if (zip == null) zip = obtain(LSPOSED_URL, LSPOSED_ZIP, "LSPosed");
         if (!LSPOSED_SHA256.equals(sha256(zip))) {
             throw new StopException("The LSPosed that setup got isn't the version setup was tested with.");
         }
@@ -361,7 +392,7 @@ final class SetupSteps {
         if (installed(BACKTALK) != null && backtalkHasDisplayApi()) return Outcome.DONE;
         File apk = fetchPayloadIfPresent(BACKTALK_APK);
         boolean downloaded = apk == null;
-        if (downloaded) apk = download(BACKTALK_URL, BACKTALK_APK, "Backtalk");
+        if (downloaded) apk = obtain(BACKTALK_URL, BACKTALK_APK, "Backtalk");
         PackageInfo info = archiveInfo(apk, PackageManager.GET_ACTIVITIES);
         if (info == null || !BACKTALK.equals(info.packageName) || (downloaded && !BACKTALK_CERT.equals(Updates.signer(info)))) {
             throw new StopException("The Backtalk that setup got isn't Backtalk's own.");
@@ -388,7 +419,7 @@ final class SetupSteps {
         boolean downloaded = apk == null;
         if (downloaded) {
             if (current != null && !newerRelease(Updates.App.HOOK)) return Outcome.DONE;
-            apk = download(Updates.App.HOOK.apkUrl(), HOOK_APK, "the Satellite hook");
+            apk = obtain(Updates.App.HOOK.apkUrl(), HOOK_APK, "the Satellite hook");
         }
         PackageInfo info = archiveInfo(apk, 0);
         if (info == null || !HOOK.equals(info.packageName) || (downloaded && !Updates.CERT.equals(Updates.signer(info)))) {
@@ -889,11 +920,33 @@ final class SetupSteps {
 
     /** A copy of a file the computer provided, in this app's storage; null if it didn't provide it. */
     private File fetchPayloadIfPresent(String name) throws StopException {
-        if (!root("[ -f " + PAYLOAD + "/" + name + " ]").ok()) return null;
+        return fromComputer(PAYLOAD, name);
+    }
+
+    /** What the installer downloaded for setup if it did, else a download of {@code url}; either is checked as a download. */
+    private File obtain(String url, String name, String what) throws StopException {
+        File f = fromComputer(DOWNLOADED, name);
+        return f != null ? f : download(url, name, what);
+    }
+
+    /** Whether the computer provided {@code name}, as the user's own file or as a download. */
+    private boolean haveFile(String name) {
+        return root("[ -f " + PAYLOAD + "/" + name + " ] || [ -f " + DOWNLOADED + "/" + name + " ]").ok();
+    }
+
+    /** A copy of {@code dir/name}, from the computer, in this app's storage; null if it isn't there. */
+    private File fromComputer(String dir, String name) throws StopException {
+        if (!root("[ -f " + dir + "/" + name + " ]").ok()) return null;
         File f = new File(cacheDir(), name);
         writeFile(f, new byte[0]);
-        rootOrStop("cat " + PAYLOAD + "/" + name + " > " + f, "Setup couldn't read its files.");
+        rootOrStop("cat " + dir + "/" + name + " > " + f, "Setup couldn't read its files.");
         return f;
+    }
+
+    /** Whether LSPosed, in the version setup was tested with or newer, is installed in Magisk. */
+    private boolean lsposedInstalled() {
+        String version = propValue(root("cat " + LSPOSED_MODULE + "/module.prop 2>/dev/null").output, "versionCode");
+        return version != null && Integer.parseInt(version.trim()) >= LSPOSED_VERSION;
     }
 
     private File cacheDir() {
