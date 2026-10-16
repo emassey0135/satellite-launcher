@@ -67,6 +67,8 @@ final class SetupBackup {
         s.append("magisk --sqlite \"DELETE FROM policies WHERE uid=").append(launcherUid).append("\"\n");
         String dnd = zenMode == 0 ? "off" : zenMode == 1 ? "priority" : zenMode == 2 ? "none" : zenMode == 3 ? "alarms" : null;
         if (dnd != null) s.append("cmd notification set_dnd ").append(dnd).append('\n');
+        // Done with, so that setting the device up again makes a new backup of how it is then.
+        s.append("rm -rf ").append(SetupSteps.STATE_DIR).append('\n');
         s.append("echo 'Restored. Uninstall the launcher, then restart the device.'\n");
         return s.toString();
     }
