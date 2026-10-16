@@ -135,7 +135,12 @@ public final class SetupService extends Service {
                     listener.say("Updating the launcher. It starts again by itself.");
                     android.os.SystemClock.sleep(LAST_MESSAGE_MS);
                     listener.log("updating the launcher");
-                    RootQuery.exec("pm install -r " + update);
+                    RootQuery.Result installed = RootQuery.exec("pm install -r " + update);
+                    // Once it has taken, Android stops this, maybe before it gets here.
+                    if (!installed.output.contains("Success")) {
+                        listener.log("the launcher's update failed: " + installed.output.trim());
+                        listener.say("The launcher couldn't be updated.");
+                    }
                 }
             }
             if (result != SetupEngine.Result.RESTARTING) stopSelf();

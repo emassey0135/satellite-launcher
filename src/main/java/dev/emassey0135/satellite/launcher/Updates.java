@@ -27,9 +27,8 @@ final class Updates {
     static final String CERT = "ea01d604414c28b2cdbfcec819cc6e444ba1e888f51a1f7506e62c0964b6c019";
 
     enum App {
-        HOOK("dev.emassey0135.satellite.hook", "the Satellite hook", "satellite-hook", "satellite-hook.apk"),
-        LAUNCHER("dev.emassey0135.satellite.launcher", "the Satellite Launcher", "satellite-launcher",
-                "satellite-launcher.apk");
+        HOOK(SetupSteps.HOOK, "the Satellite hook", "satellite-hook", "satellite-hook.apk"),
+        LAUNCHER(SetupSteps.LAUNCHER, "the Satellite Launcher", "satellite-launcher", "satellite-launcher.apk");
 
         final String pkg;
         /** What it is called when speaking of it. */

@@ -81,7 +81,7 @@ final class SetupSteps {
             "https://github.com/LSPosed/LSPosed/releases/download/v1.9.2/LSPosed-v1.9.2-7024-zygisk-release.zip";
     private static final String LSPOSED_SHA256 = "0ebc6bcb465d1c4b44b7220ab5f0252e6b4eb7fe43da74650476d2798bb29622";
     private static final int LSPOSED_VERSION = 7024;
-    private static final String HOOK_APK = "satellite-hook.apk";
+    private static final String HOOK_APK = Updates.App.HOOK.apk;
     private static final String BACKTALK_APK = "backtalk.apk";
     /** Backtalk's development builds, which it updates itself from. */
     private static final String BACKTALK_URL = "https://github.com/trypsynth/backtalk/releases/download/dev/backtalk.apk";
@@ -195,7 +195,7 @@ final class SetupSteps {
         List<String> needed = new ArrayList<>();
         if (!lsposedInstalled() && !haveFile(LSPOSED_ZIP)) needed.add("LSPosed");
         if (installed(HOOK) == null && !haveFile(HOOK_APK)) needed.add("the Satellite hook");
-        if (!(installed(BACKTALK) != null && backtalkHasDisplayApi()) && !haveFile(BACKTALK_APK)) needed.add("Backtalk");
+        if (!backtalkReady() && !haveFile(BACKTALK_APK)) needed.add("Backtalk");
         if (needed.isEmpty() || online()) return Outcome.DONE;
         String what = needed.size() == 1 ? needed.get(0)
                 : String.join(", ", needed.subList(0, needed.size() - 1)) + " and " + needed.get(needed.size() - 1);
@@ -389,7 +389,7 @@ final class SetupSteps {
      * Otherwise Backtalk's own release, if that can.
      */
     private Outcome installBacktalk() throws Exception {
-        if (installed(BACKTALK) != null && backtalkHasDisplayApi()) return Outcome.DONE;
+        if (backtalkReady()) return Outcome.DONE;
         File apk = fetchPayloadIfPresent(BACKTALK_APK);
         boolean downloaded = apk == null;
         if (downloaded) apk = obtain(BACKTALK_URL, BACKTALK_APK, "Backtalk");
@@ -813,6 +813,11 @@ final class SetupSteps {
         } catch (PackageManager.NameNotFoundException e) {
             return null;
         }
+    }
+
+    /** Whether Backtalk is installed and can use another app as a braille display, once the user allows it. */
+    private boolean backtalkReady() {
+        return installed(BACKTALK) != null && backtalkHasDisplayApi();
     }
 
     /** Whether the installed Backtalk can use another app as a braille display, once the user allows it. */
