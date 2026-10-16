@@ -96,6 +96,7 @@ public class SetupStepsTest {
         assertTrue(script.contains("pm uninstall dev.emassey0135.satellite.hook\n"));
         assertFalse(script.contains("pm uninstall fyi.quin.backtalk")); // it was there before
         assertTrue(script.contains("rm -rf /data/adb/satellite\necho 'Restored.")); // the backup goes last
+        assertTrue(script.contains("am start -a android.intent.action.MAIN -c android.intent.category.HOME\nrm -rf"));
         assertTrue(script.contains("UPDATE policies SET notification=1 WHERE uid=10170"));
         assertTrue(script.contains("DELETE FROM policies WHERE uid=10207"));
         assertTrue(script.contains("cmd notification set_dnd priority\n"));
